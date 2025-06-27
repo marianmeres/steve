@@ -1,0 +1,19 @@
+{
+	"name": "@marianmeres/steve",
+	"version": "1.0.1",
+	"exports": "./src/mod.ts",
+	"tasks": {
+		"test": "deno test -A --watch",
+		"npm:build": "deno run -A scripts/build-npm.ts",
+		"npm:publish": "deno run -A scripts/build-npm.ts && cd ./.npm-dist && npm publish --access=public"
+	},
+	"imports": {
+		"@std/assert": "jsr:@std/assert@1",
+		"pg": "npm:pg@^8.16.2"
+	},
+	"fmt": {
+		"useTabs": true,
+		"lineWidth": 90,
+		"indentWidth": 4
+	}
+}
