@@ -15,7 +15,7 @@ export const JOB_STATUS = {
 	RUNNING: "running",
 	COMPLETED: "completed",
 	FAILED: "failed",
-	EXPIRED: "expired",
+	EXPIRED: "expired", // after in "running" state for too long
 };
 
 /** Job attempt log statuses */
@@ -92,13 +92,17 @@ export function jobs(options: JobsOptions) {
 	let isShuttingDown = false;
 	const activeJobs = new Set();
 	let workers: Promise<void>[] = [];
+
 	const context: JobContext = {
 		db: pgPool,
-		tableNames: _tables(tablePrefix),
+		tableNames: {
+			tableJobs: `${tablePrefix}job`,
+			tableAttempts: `${tablePrefix}job_attempt`,
+		},
 		logger,
 	};
 
-	/**  */
+	//
 	async function processJobs(workerId: string): Promise<void> {
 		while (!isShuttingDown) {
 			const job = await _claimNextJob(context);
@@ -126,7 +130,7 @@ export function jobs(options: JobsOptions) {
 		logger?.(`Worker ${workerId} stopped`);
 	}
 
-	/** Reasonable value of concurrent workers would be 2-4 */
+	// Reasonable value of concurrent workers would be 2-4
 	function start(workersCount: number = 2) {
 		if (isShuttingDown) {
 			throw new Error(`Cannot start (shutdown in progress detected)`);
@@ -137,7 +141,7 @@ export function jobs(options: JobsOptions) {
 		}
 	}
 
-	/** This is a gracefull stop - will wait for all workers to finish */
+	// This is a graceful stop (will wait for all workers to finish)
 	async function stop() {
 		isShuttingDown = true;
 		await Promise.all(workers);
@@ -156,22 +160,14 @@ export function jobs(options: JobsOptions) {
 		initialize,
 		start,
 		stop,
-		/** Will do some maintenance cleanups... It's up to the consumer how often
-		 * will be called. */
+		/** Will do some maintenance cleanups. It's up to the consumer to decide the frequency. */
 		cleanup() {
 			return _markExpired(context);
-			// todo: delete old?
+			// todo: hard delete old?
 		},
-		/** Will collect average run duration */
+		/** Will collect some stats... */
 		healthPreview(sinceHours = 1) {
 			return _healhPreview(context, sinceHours);
 		},
-	};
-}
-
-function _tables(tablePrefix: string): JobContext["tableNames"] {
-	return {
-		tableJobs: `${tablePrefix}job`,
-		tableAttempts: `${tablePrefix}job_attempt`,
 	};
 }
