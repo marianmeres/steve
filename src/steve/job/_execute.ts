@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import type { Job, JobContext, JobHandler } from "../jobs.ts";
 import { _completeJob } from "./_complete.ts";
 import { _handleJobFailure } from "./_handle-failure.ts";

@@ -37,7 +37,7 @@ export interface JobContext {
 	logger: Logger;
 }
 
-/**  */
+/** The job row */
 export interface Job {
 	id: number;
 	type: string;
@@ -118,7 +118,7 @@ export function jobs(options: JobsOptions) {
 			}
 		}
 
-		// we are re here only if there is a shutdown in progress
+		// we are here only if there is a shutdown in progress
 
 		if (activeJobs.size > 0) {
 			logger?.(`Waiting for ${activeJobs.size} jobs to complete...`);
@@ -127,7 +127,7 @@ export function jobs(options: JobsOptions) {
 			}
 		}
 
-		logger?.(`Worker ${workerId} stopped`);
+		logger?.(`Worker '${workerId}' stopped`);
 	}
 
 	// Reasonable value of concurrent workers would be 2-4

@@ -21,8 +21,8 @@ export async function _handleJobFailure(
 		error?.stack ? { stack: error.stack } : null
 	);
 
+	// max attempts reached - mark as failed
 	if (job.attempts >= job.max_attempts) {
-		// Max attempts reached - mark as failed
 		await db.query(
 			`UPDATE ${tableJobs}
 			SET status = '${JOB_STATUS.FAILED}', 
@@ -31,8 +31,9 @@ export async function _handleJobFailure(
 			WHERE id = $1`,
 			[job.id]
 		);
-	} else {
-		// Schedule retry with exponential backoff
+	}
+	// schedule retry with exponential backoff
+	else {
 		const backoffMs = Math.pow(2, job.attempts) * 1000; // 2^attempts seconds
 		await db.query(
 			`UPDATE ${tableJobs}
