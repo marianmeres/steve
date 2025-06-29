@@ -2,9 +2,7 @@
 
 import type { JobContext } from "../jobs.ts";
 
-/**
- * Will collect some basic stats about the jobs since `sinceHours`
- */
+/** Will collect some basic stats about the jobs since `sinceHours` */
 export async function _healthPreview(
 	context: JobContext,
 	sinceHours = 1
