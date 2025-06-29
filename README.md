@@ -61,7 +61,7 @@ const job = await jobs.create(
 
 ```typescript
 jobs.onFailure('my_important_job_type', (failed: Job) => {
-    // this is triggered once once max_attempts are reached (not on retries)
+    // this is triggered once max_attempts are reached (not on retry-able error)
 });
 
 jobs.onSuccess('my_job_type', (job: Job) => {
