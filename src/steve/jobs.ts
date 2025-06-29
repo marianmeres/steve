@@ -128,7 +128,35 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 }
 
 /** Core public factory api. Will create the jobs handling manager */
-export function createJobs(options: JobsOptions) {
+export function createJobs(options: JobsOptions): {
+	start: (processorsCount: number) => Promise<void>;
+	stop: () => Promise<void>;
+	create(
+		type: string,
+		payload: Record<string, any>,
+		options: Partial<{
+			max_attempts: JobCreateDTO["max_attempts"];
+			backoff_strategy: JobCreateDTO["backoff_strategy"];
+		}>
+	): Promise<Job>;
+	find(
+		uid: string,
+		withAttempts: boolean
+	): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
+	fetchAll(
+		status: undefined | null | Job["status"] | Job["status"][],
+		options: Partial<{
+			limit: number | string;
+			offset: number | string;
+		}>
+	): Promise<Job[]>;
+	cleanup(): Promise<void>;
+	healthPreview(sinceHours: undefined | number): Promise<any[]>;
+	uninstall(): Promise<void>;
+	onSuccess(type: string, cb: (job: Job) => void): void;
+	onFailure(type: string, cb: (job: Job) => void): void;
+	unsubscribeAll(): void;
+} {
 	const {
 		jobHandler,
 		db,
@@ -239,7 +267,7 @@ export function createJobs(options: JobsOptions) {
 				max_attempts: JobCreateDTO["max_attempts"];
 				backoff_strategy: JobCreateDTO["backoff_strategy"];
 			}> = {}
-		) {
+		): Promise<Job> {
 			const { max_attempts = 3, backoff_strategy = BACKOFF_STRATEGY.EXP } =
 				options || {};
 
@@ -276,7 +304,7 @@ export function createJobs(options: JobsOptions) {
 				limit: number | string;
 				offset: number | string;
 			}> = {}
-		) {
+		): Promise<Job[]> {
 			await _initializeOnce();
 
 			let where = null;
@@ -334,7 +362,10 @@ export function createJobs(options: JobsOptions) {
 }
 
 /** For manual hackings (used in tests). */
-export function __jobsSchema(tablePrefix: string = "") {
+export function __jobsSchema(tablePrefix: string = ""): {
+	drop: string;
+	create: string;
+} {
 	const context = { tableNames: tableNames(tablePrefix) };
 	return {
 		drop: _schemaDrop(context),
