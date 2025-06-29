@@ -1,8 +1,11 @@
 # @marianmeres/steve
 
-Atomic, PostgreSQL based ([node-postgres](https://node-postgres.com/)), simple yet 
-extensible jobs manager. Supporting multiple concurrent job queue processors, configurable 
+PostgreSQL based jobs processing manager. 
+
+Supports atomic concurrency, multiple "workers" (job processors), configurable 
 retry logic, backoff, detailed logging and more...
+
+Uses [node-postgres](https://node-postgres.com/) internally.
 
 ## Installation
 
@@ -19,22 +22,23 @@ npm i @marianmeres/steve
 ```typescript
 import { createJobs } from "@marianmeres/steve";
 
-// first, create jobs processing manager instance
+// the manager instance
 const jobs = await createJobs({
     db, // pg.Pool or pg.Client 
     jobHandler(job: Job) {
-        // - do the work... (may dispatch to another handlers based on the `job.type`)
+        // - do the work... 
+        // - may dispatch the work to another handlers based on the `job.type`
         // - must throw on error
         // - returned data will be available as the `result` prop 
     },
 });
 
-// kick off the job processing (with, let's say, 2 concurrent processors)
+// kicks off the job processing (with, let's say, 2 concurrent processors)
 jobs.start(2);
 
 // now the system is ready to handle any incoming jobs...
 
-// stop processing and gracefully finish all running jobs
+// stops processing (while gracefully finishes all currently running jobs)
 jobs.stop();
 ```
 
@@ -58,8 +62,7 @@ const job = await jobs.create(
 
 ```typescript
 jobs.onFailure('my_important_job_type', (failed: Job) => {
-    // Note that this is not triggered on error (which will
-    // be retried), but only on true failure (once max_attempts are reached).
+    // this is triggered once once max_attempts are reached (not on retries)
 });
 
 jobs.onSuccess('my_job_type', (job: Job) => {
@@ -81,10 +84,7 @@ jobs.find(
 ```typescript
 jobs.fetchAll(
     status: undefined | null | Job["status"] | Job["status"][] = null,
-    options: Partial<{
-        limit: number | string;
-        offset: number | string;
-    }> = {}
+    options: Partial<{ limit: number; offset: number; }> = {}
 ): Promise<Job[]>
 ```
 
@@ -112,6 +112,7 @@ interface Job {
     backoff_strategy: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
 }
 
+// the "debug" log of each attempt
 interface JobAttempt {
     id: number;
     job_id: string;
