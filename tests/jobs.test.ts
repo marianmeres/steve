@@ -197,6 +197,10 @@ testsRunner([
 			// teardown
 			await jobs.stop();
 			jobs.unsubscribeAll();
+
+			const all = await jobs.fetchAll();
+			assertEquals(all.length, 1);
+			assertEquals(all[0].status, JOB_STATUS.COMPLETED);
 		},
 		// only: true,
 	},
@@ -242,6 +246,12 @@ testsRunner([
 			// teardown
 			await jobs.stop();
 			jobs.unsubscribeAll();
+
+			const all = await jobs.fetchAll();
+			assertEquals(all.length, 1);
+			assertEquals(all[0].status, JOB_STATUS.FAILED);
+
+			assertEquals(await jobs.fetchAll(JOB_STATUS.PENDING), []);
 		},
 		// only: true,
 	},

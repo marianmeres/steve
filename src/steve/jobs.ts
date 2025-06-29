@@ -129,7 +129,7 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 
 /** Core public factory api. Will create the jobs handling manager */
 export function createJobs(options: JobsOptions): {
-	start: (processorsCount: number) => Promise<void>;
+	start: (processorsCount?: number) => Promise<void>;
 	stop: () => Promise<void>;
 	create(
 		type: string,
@@ -141,17 +141,17 @@ export function createJobs(options: JobsOptions): {
 	): Promise<Job>;
 	find(
 		uid: string,
-		withAttempts: boolean
+		withAttempts?: boolean
 	): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
 	fetchAll(
-		status: undefined | null | Job["status"] | Job["status"][],
-		options: Partial<{
+		status?: undefined | null | Job["status"] | Job["status"][],
+		options?: Partial<{
 			limit: number | string;
 			offset: number | string;
 		}>
 	): Promise<Job[]>;
 	cleanup(): Promise<void>;
-	healthPreview(sinceHours: undefined | number): Promise<any[]>;
+	healthPreview(sinceHours?: number): Promise<any[]>;
 	uninstall(): Promise<void>;
 	onSuccess(type: string, cb: (job: Job) => void): void;
 	onFailure(type: string, cb: (job: Job) => void): void;
