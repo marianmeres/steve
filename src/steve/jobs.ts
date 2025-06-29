@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 
-import { createPubSub, Unsubscriber } from "@marianmeres/pubsub";
+import { createPubSub, type Unsubscriber } from "@marianmeres/pubsub";
 import process from "node:process";
 import type pg from "pg";
 import { _claimNextJob } from "./job/_claim-next.ts";
@@ -34,6 +34,7 @@ export const ATTEMPT_STATUS = {
 	ERROR: "error",
 };
 
+/** Supported backoff strategies */
 export const BACKOFF_STRATEGY = {
 	NONE: "none",
 	EXP: "exp", // 2^attempts seconds

@@ -23,7 +23,7 @@ async function _createJobs(db: pg.Client, jobHandler: JobHandler) {
 	await db.query(Jobs.__schema(tablePrefix).drop);
 	_logger = [];
 
-	const jobs = new Jobs({
+	return new Jobs({
 		db,
 		jobHandler,
 		logger: (...args: any) => _logger.push(args[0]),
@@ -32,8 +32,6 @@ async function _createJobs(db: pg.Client, jobHandler: JobHandler) {
 		pollTimeoutMs,
 		tablePrefix,
 	});
-
-	return jobs;
 }
 
 testsRunner([
