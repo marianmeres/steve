@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 
-import { createPubSub } from "@marianmeres/pubsub";
+import { createPubSub, Unsubscriber } from "@marianmeres/pubsub";
 import process from "node:process";
 import type pg from "pg";
 import { _claimNextJob } from "./job/_claim-next.ts";
@@ -135,8 +135,8 @@ export class Jobs {
 	readonly logger: Logger;
 	readonly gracefulSigterm: boolean;
 	readonly tablePrefix: string;
-	readonly pubsubSuccess = createPubSub();
-	readonly pubsubFailure = createPubSub();
+	readonly pubsubSuccess: ReturnType<typeof createPubSub> = createPubSub();
+	readonly pubsubFailure: ReturnType<typeof createPubSub> = createPubSub();
 	readonly context: JobContext;
 
 	#isShuttingDown = false;
@@ -304,7 +304,7 @@ export class Jobs {
 
 	/** Will do some maintenance cleanups. It's up to the consumer to decide the
 	 * overall cleanup strategy. */
-	async cleanup() {
+	async cleanup(): Promise<void> {
 		// this does not make much sense to initialize on cleanup... but keeping the convention
 		await this.#initializeOnce();
 		return _markExpired(this.context);
@@ -312,18 +312,18 @@ export class Jobs {
 	}
 
 	/** Will collect some stats... */
-	async healthPreview(sinceHours = 1) {
+	async healthPreview(sinceHours = 1): Promise<any[]> {
 		await this.#initializeOnce();
 		return _healthPreview(this.context, sinceHours);
 	}
 
 	/** Will remove related tables. */
-	uninstall() {
+	uninstall(): Promise<void> {
 		return _uninstall(this.context);
 	}
 
 	/** Subscribe callback for a completed job type */
-	onSuccess(type: string, cb: (job: Job) => void) {
+	onSuccess(type: string, cb: (job: Job) => void): Unsubscriber {
 		return this.pubsubSuccess.subscribe(type, cb);
 	}
 
@@ -332,12 +332,12 @@ export class Jobs {
 	 * because "errors" are handled and retried... this callback is only triggered
 	 * where all retries failed.
 	 */
-	onFailure(type: string, cb: (job: Job) => void) {
+	onFailure(type: string, cb: (job: Job) => void): Unsubscriber {
 		return this.pubsubFailure.subscribe(type, cb);
 	}
 
 	/** Helper to unsub all listeners. Used in tests. */
-	unsubscribeAll() {
+	unsubscribeAll(): void {
 		this.pubsubSuccess.unsubscribeAll();
 		this.pubsubFailure.unsubscribeAll();
 	}
