@@ -21,64 +21,105 @@ import { createJobs } from "@marianmeres/steve";
 
 // first, create jobs processing manager instance
 const jobs = await createJobs({
-    // pass in the pg.Pool or pg.Client 
-    db,
-    // actual core job handler worker
-    (job: Job) => {
-        // - do the work... may dispatch to another handlers based on the `job.type` 
-        //   (arbitrary string value)
-        // - must throw on error (to be able to recognize as failed state)
-        // - if desired, can return data which will be available as the `result` prop 
-        //   (and will be serialized in the db as well)
+    db, // pg.Pool or pg.Client 
+    jobHandler(job: Job) {
+        // - do the work... (may dispatch to another handlers based on the `job.type`)
+        // - must throw on error
+        // - returned data will be available as the `result` prop 
     },
-    // optional custom delay in ms before idle worker will try to claim another pending job. 
-    // This does a DB read, so you probably don't want a crazy small number (default 1_000)
-    pollTimeoutMs: number
 });
 
-// kick off the job processing (let's say, with 2 concurrent processors)
+// kick off the job processing (with, let's say, 2 concurrent processors)
 jobs.start(2);
 
 // now the system is ready to handle any incoming jobs...
 
-// To stop the processing, just call `stop` which will gracefully finish all running jobs
-// and will not start any other
+// stop processing and gracefully finish all running jobs
 jobs.stop();
 ```
 
 ## Creating a job
 
 ```typescript
-await jobs.create(
-    // required arbitrary string value
-    'my_job_type',
-    // optional arbitrary job data... will be available as the `payload` prop in the handler
-    // must be JSON serializable
-    { foo: 'bar' },
-    // optional job processor customization
+const job = await jobs.create(
+    'my_job_type', // required
+    { foo: 'bar' }, // optional payload
+    // optional options
     {
-        // maximum number of attempts before the system will give up and mark the job as failed
-        // (default 3)
-        max_attempts: number;
-        // backoff strategy to use on error (default is exponential backoff with 2^attempts seconds)
-        backoff_strategy: 'none' | 'exp';
-    }
+        // maximum number of attempts before giving up and marking the job as failed
+        max_attempts: 3, // default: 3
+        // default: 'exp' (exponential backoff with 2^attempts seconds)
+        backoff_strategy: 'none' // or 'exp', 
+    } 
 );
 ```
 
-## Listening to jobs successes or failures
+## Listening to success and/or failure
 
 ```typescript
-//
 jobs.onFailure('my_important_job_type', (failed: Job) => {
-    // do something on job failure. Note that this is not triggered on error (which will
-    // be retried), but only on "true" failure.
+    // Note that this is not triggered on error (which will
+    // be retried), but only on true failure (once max_attempts are reached).
 });
 
-//
 jobs.onSuccess('my_job_type', (job: Job) => {
-    // do someting on job success
     console.log(job.result);
 });
 ```
 
+## Examining the job manually
+
+```typescript
+jobs.find(
+    uid: string,
+    withAttempts: boolean = false
+): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
+```
+
+## Listing all
+
+```typescript
+jobs.fetchAll(
+    status: undefined | null | Job["status"] | Job["status"][] = null,
+    options: Partial<{
+        limit: number | string;
+        offset: number | string;
+    }> = {}
+): Promise<Job[]>
+```
+
+## The Interfaces
+
+```typescript
+interface Job {
+    id: number;
+    uid: string;
+    type: string;
+    payload: Record<string, any>;
+    result: null | undefined | Record<string, any>;
+    status:
+        | typeof JOB_STATUS.PENDING
+        | typeof JOB_STATUS.RUNNING
+        | typeof JOB_STATUS.COMPLETED
+        | typeof JOB_STATUS.FAILED;
+    attempts: number;
+    max_attempts: number;
+    created_at: Date;
+    updated_at: Date;
+    started_at: Date;
+    completed_at: Date;
+    run_at: Date;
+    backoff_strategy: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
+}
+
+interface JobAttempt {
+    id: number;
+    job_id: string;
+    attempt_number: number;
+    started_at: Date;
+    completed_at: Date;
+    status: typeof ATTEMPT_STATUS.SUCCESS | typeof ATTEMPT_STATUS.ERROR;
+    error_message: null;
+    error_details: null | Record<"stack" | string, any>;
+}
+```
