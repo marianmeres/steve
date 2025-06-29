@@ -287,6 +287,7 @@ export class Jobs {
 		options: Partial<{
 			limit: number | string;
 			offset: number | string;
+			asc: number | string | boolean;
 		}> = {}
 	): Promise<Job[]> {
 		await this.#initializeOnce();
