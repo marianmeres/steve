@@ -11,9 +11,14 @@ export async function _executeJob(
 	const attemptId = await _logAttemptStart(context, job);
 
 	try {
-		await handler(job);
-		await _completeJob(context, job.id, attemptId);
+		const result = await handler(job);
+		const completedJob = await _completeJob(context, job.id, attemptId, result); // TX
+		context.pubsubSuccess.publish(job.type, completedJob);
 	} catch (error) {
-		await _handleJobFailure(context, job, attemptId, error);
+		const failedJob = await _handleJobFailure(context, job, attemptId, error); // TX
+		// publish only on truly failed, not on retries
+		if (failedJob) {
+			context.pubsubFailure.publish(job.type, failedJob);
+		}
 	}
 }

@@ -1,13 +1,15 @@
-import { type JobContext } from "../jobs.ts";
+// deno-lint-ignore-file no-explicit-any
+
+import type { JobContext } from "../jobs.ts";
 
 /**
  * Will mark jobs which are still marked as "running" after `allowedDurationMinutes`
  * as expired (the may have crashed mid-job). This is just a cleanup.
  */
-export async function _healhPreview(
+export async function _healthPreview(
 	context: JobContext,
 	sinceHours = 1
-): Promise<void> {
+): Promise<any[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 

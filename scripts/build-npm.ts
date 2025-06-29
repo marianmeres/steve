@@ -41,13 +41,15 @@ Deno.copyFileSync("README.md", join(outDir, "README.md"));
 const tsconfigJson = {
 	compilerOptions: {
 		target: "esnext",
-		module: "esnext",
+		module: "nodenext",
 		strict: false,
 		declaration: true,
 		forceConsistentCasingInFileNames: true,
 		skipLibCheck: true,
 		rootDir: "src",
 		outDir: "dist",
+		moduleResolution: "nodenext",
+		types: ["node"]
 	},
 };
 Deno.writeTextFileSync(
@@ -75,13 +77,19 @@ const packageJson = {
 	license: "MIT",
 	repository: {
 		type: "git",
-		url: "git+https://github.com/marianmeres/searchable.git",
+		url: "git+https://github.com/marianmeres/steve.git",
 	},
 	bugs: {
-		url: "https://github.com/marianmeres/searchable/issues",
+		url: "https://github.com/marianmeres/steve/issues",
 	},
-	dependencies: {}
+	dependencies: {
+		"@marianmeres/parse-boolean": "^1.1.7",
+		"@marianmeres/pubsub": "^2.0.0",
+		"@types/node": "latest",
+		"@types/pg": "latest"
+	}
 };
+// "pg": "^8.16.2",
 Deno.writeTextFileSync(
 	join(outDir, "package.json"),
 	JSON.stringify(packageJson, null, "\t")
@@ -90,7 +98,7 @@ Deno.writeTextFileSync(
 Deno.chdir(outDir);
 
 ([
-	// ["npm", { args: ["install"] }],
+	["npm", { args: ["install"] }],
 	["tsc", { args: ["-p", "tsconfig.json"] }],
 ] as [string, { args: string[]}][]).forEach(([cmd, opts]) => {
 	console.log('--> Executing:', cmd, opts);
@@ -108,5 +116,3 @@ Deno.chdir(outDir);
 
 Deno.removeSync(outDirSrc, { recursive: true });
 
-// copy dist to example
-copySync(outDirDist, join(srcDir, '../example/dist'), { overwrite: true });

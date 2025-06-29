@@ -1,0 +1,10 @@
+node_modules/
+.idea
+.DS_Store
+.env
+.env.*
+!.env.example
+dist
+demo/demodb.sqlite3
+tmp/*
+.npm-dist

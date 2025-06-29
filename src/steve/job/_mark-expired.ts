@@ -9,16 +9,17 @@ import { JOB_STATUS, type JobContext } from "../jobs.ts";
  */
 export async function _markExpired(
 	context: JobContext,
-	maxAllowedRunDurationMin = 5
+	maxAllowedRunDurationMinutes = 5
 ): Promise<void> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
+	const num = Math.round(maxAllowedRunDurationMinutes);
 
 	await db.query(
 		`UPDATE ${tableJobs} 
 		SET status = '${JOB_STATUS.EXPIRED}', 
 			updated_at = NOW()
 		WHERE status = '${JOB_STATUS.RUNNING}' 
-			AND started_at < NOW() - INTERVAL '${maxAllowedRunDurationMin} minutes'`
+			AND started_at < NOW() - INTERVAL '${num} minutes'`
 	);
 }

@@ -1,6 +1,11 @@
 // deno-lint-ignore-file no-explicit-any
 
-import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
+import {
+	BACKOFF_STRATEGY,
+	JOB_STATUS,
+	type Job,
+	type JobContext,
+} from "../jobs.ts";
 import { _logAttemptError } from "./_log-attempt.ts";
 
 export async function _handleJobFailure(
@@ -8,7 +13,7 @@ export async function _handleJobFailure(
 	job: Job,
 	attemptId: number,
 	error: any
-): Promise<void> {
+): Promise<Job | null> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
@@ -21,20 +26,41 @@ export async function _handleJobFailure(
 		error?.stack ? { stack: error.stack } : null
 	);
 
+	let failed = null;
+
 	// max attempts reached - mark as failed
 	if (job.attempts >= job.max_attempts) {
-		await db.query(
-			`UPDATE ${tableJobs}
-			SET status = '${JOB_STATUS.FAILED}', 
-				completed_at = NOW(), 
-				updated_at = NOW()
-			WHERE id = $1`,
-			[job.id]
-		);
+		// only here we know the job truly failed
+		failed = (
+			await db.query(
+				`UPDATE ${tableJobs}
+				SET status = '${JOB_STATUS.FAILED}', 
+					completed_at = NOW(), 
+					updated_at = NOW()
+				WHERE id = $1
+				RETURNING *`,
+				[job.id]
+			)
+		).rows[0];
 	}
 	// schedule retry with exponential backoff
 	else {
-		const backoffMs = Math.pow(2, job.attempts) * 1000; // 2^attempts seconds
+		let backoffMs = 0;
+		let strategy = job.backoff_strategy;
+		const whitelist = [BACKOFF_STRATEGY.EXP, BACKOFF_STRATEGY.NONE];
+		const defaultStrategy = BACKOFF_STRATEGY.EXP;
+
+		if (!whitelist.includes(strategy)) {
+			context?.logger?.(
+				`Unknown backoff strategy '${strategy}' (falling back to '${defaultStrategy}').`
+			);
+			strategy = defaultStrategy;
+		}
+
+		if (strategy === BACKOFF_STRATEGY.EXP) {
+			backoffMs = Math.pow(2, job.attempts) * 1000; // 2^attempts seconds
+		}
+
 		await db.query(
 			`UPDATE ${tableJobs}
 			SET status = '${JOB_STATUS.PENDING}',
@@ -46,4 +72,6 @@ export async function _handleJobFailure(
 	}
 
 	await db.query("COMMIT");
+
+	return failed;
 }

@@ -1,6 +1,11 @@
 // deno-lint-ignore-file no-explicit-any
 
-import { ATTEMPT_STATUS, type Job, type JobContext } from "../jobs.ts";
+import {
+	ATTEMPT_STATUS,
+	type Job,
+	type JobAttempt,
+	type JobContext,
+} from "../jobs.ts";
 
 /**  */
 export async function _logAttemptStart(
@@ -56,4 +61,19 @@ export async function _logAttemptError(
 		WHERE id = $3`,
 		[errMessage, errDetails ? JSON.stringify(errDetails) : null, attemptId]
 	);
+}
+
+/**  */
+export async function _logAttemptErrorFetchAll(
+	context: JobContext,
+	jobId: number
+): Promise<JobAttempt[]> {
+	const { db, tableNames } = context;
+	const { tableAttempts } = tableNames;
+	const { rows } = await db.query(
+		`SELECT * FROM ${tableAttempts} WHERE job_id = $1 ORDER BY id asc`,
+		[jobId]
+	);
+
+	return rows;
 }

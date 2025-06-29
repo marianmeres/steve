@@ -16,7 +16,7 @@ export async function _claimNextJob(context: JobContext) {
             WHERE status = '${JOB_STATUS.PENDING}' 
             AND run_at <= NOW()
             ORDER BY id 
-            FOR UPDATE SKIP LOCKED -- important!
+            FOR UPDATE SKIP LOCKED -- Important!
             LIMIT 1
         )
         RETURNING *`);
