@@ -26,11 +26,13 @@ import { createJobs } from "@marianmeres/steve";
 const jobs = await createJobs({
     db, // pg.Pool or pg.Client 
     jobHandler(job: Job) {
-        // - do the work... 
-        // - may dispatch the work to another handlers based on the `job.type`
-        // - must throw on error
-        // - returned data will be available as the `result` prop 
+        // Do the work... 
+        // May dispatch the work to another handlers based on the `job.type`.
+        // Must throw on error.
+        // Returned data will be available as the `result` prop.
     },
+    // how long should the worker be idle before trying to claim new job
+    pollIntervalMs, // default 1_000
 });
 
 // kicks off the job processing (with, let's say, 2 concurrent processors)
@@ -48,13 +50,10 @@ jobs.stop();
 const job = await jobs.create(
     'my_job_type', // required
     { foo: 'bar' }, // optional payload
-    // optional options
     {
-        // maximum number of attempts before giving up and marking the job as failed
-        max_attempts: 3, // default: 3
-        // default: 'exp' (exponential backoff with 2^attempts seconds)
-        backoff_strategy: 'none' // or 'exp', 
-    } 
+        max_attempts: 3, // maximum number of retry attempts before giving up
+        backoff_strategy: 'none' // or 'exp' (exp. backoff with 2^attempts seconds), 
+    } // optional
 );
 ```
 
