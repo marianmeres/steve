@@ -31,7 +31,7 @@ const jobs = await createJobs({
         // Must throw on error.
         // Returned data will be available as the `result` prop.
     },
-    // how long should the worker be idle before trying to claim new job
+    // how long should the worker be idle before trying to claim a new job
     pollIntervalMs, // default 1_000
 });
 
