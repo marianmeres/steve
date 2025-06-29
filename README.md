@@ -20,10 +20,10 @@ npm i @marianmeres/steve
 ## Basic Usage
 
 ```typescript
-import { createJobs } from "@marianmeres/steve";
+import { Jobs } from "@marianmeres/steve";
 
 // the manager instance
-const jobs = await createJobs({
+const jobs = new Jobs({
     db, // pg.Pool or pg.Client 
     jobHandler(job: Job) {
         // Do the work... 

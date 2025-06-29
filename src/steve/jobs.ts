@@ -127,248 +127,230 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 	};
 }
 
-/** Core public factory api. Will create the jobs handling manager */
-export function createJobs(options: JobsOptions): {
-	start: (processorsCount?: number) => Promise<void>;
-	stop: () => Promise<void>;
-	create(
-		type: string,
-		payload: Record<string, any>,
-		options: Partial<{
-			max_attempts: JobCreateDTO["max_attempts"];
-			backoff_strategy: JobCreateDTO["backoff_strategy"];
-		}>
-	): Promise<Job>;
-	find(
-		uid: string,
-		withAttempts?: boolean
-	): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
-	fetchAll(
-		status?: undefined | null | Job["status"] | Job["status"][],
-		options?: Partial<{
-			limit: number | string;
-			offset: number | string;
-		}>
-	): Promise<Job[]>;
-	cleanup(): Promise<void>;
-	healthPreview(sinceHours?: number): Promise<any[]>;
-	uninstall(): Promise<void>;
-	onSuccess(type: string, cb: (job: Job) => void): void;
-	onFailure(type: string, cb: (job: Job) => void): void;
-	unsubscribeAll(): void;
-} {
-	const {
-		jobHandler,
-		db,
-		pollTimeoutMs = 1_000,
-		tablePrefix = "",
-		logger = defaultLogger,
-		gracefulSigterm = true,
-	} = options || {};
+/** Core jobs manager  */
+export class Jobs {
+	#db: pg.Pool | pg.Client;
+	readonly jobHandler: JobHandler;
+	readonly pollTimeoutMs: number;
+	readonly logger: Logger;
+	readonly gracefulSigterm: boolean;
+	readonly tablePrefix: string;
+	readonly pubsubSuccess = createPubSub();
+	readonly pubsubFailure = createPubSub();
+	readonly context: JobContext;
 
-	let isShuttingDown = false;
-	let wasInitialized = false;
-	const activeJobs = new Set();
-	let jobProcessors: Promise<void>[] = [];
-	const pubsubSuccess = createPubSub();
-	const pubsubFailure = createPubSub();
+	#isShuttingDown = false;
+	#wasInitialized = false;
+	#activeJobs = new Set();
+	#jobProcessors: Promise<void>[] = [];
 
-	const context: JobContext = {
-		db,
-		tableNames: tableNames(tablePrefix),
-		logger,
-		pubsubSuccess,
-		pubsubFailure,
-	};
+	constructor(options: JobsOptions) {
+		const {
+			jobHandler,
+			db,
+			pollTimeoutMs = 1_000,
+			tablePrefix = "",
+			logger = defaultLogger,
+			gracefulSigterm = true,
+		} = options || {};
 
-	//
-	async function _initializeOnce() {
-		if (!wasInitialized) {
-			await _initialize(context);
-			logger?.(`System initialized`);
-			wasInitialized = true;
+		this.#db = db;
+		this.jobHandler = jobHandler;
+		this.pollTimeoutMs = pollTimeoutMs;
+		this.tablePrefix = tablePrefix;
+		this.logger = logger;
+		this.gracefulSigterm = gracefulSigterm;
+
+		this.context = {
+			db: this.#db,
+			tableNames: tableNames(tablePrefix),
+			logger: this.logger,
+			pubsubSuccess: this.pubsubSuccess,
+			pubsubFailure: this.pubsubFailure,
+		};
+	}
+
+	async #initializeOnce() {
+		if (!this.#wasInitialized) {
+			await _initialize(this.context);
+			this.logger?.(`System initialized`);
+			this.#wasInitialized = true;
+
+			if (this.gracefulSigterm) {
+				process.on("SIGTERM", async () => {
+					this.logger?.(`SIGTERM detected...`);
+					await this.stop();
+					// not calling the exit here... this should be a responsibility of the consumer
+					// process.exit(0);
+				});
+			}
 		}
 	}
 
-	//
-	async function _processJobs(processorId: string): Promise<void> {
-		while (!isShuttingDown) {
-			const job = await _claimNextJob(context);
+	async #processJobs(processorId: string): Promise<void> {
+		while (!this.#isShuttingDown) {
+			const job = await _claimNextJob(this.context);
 			if (job) {
-				activeJobs.add(job.id);
+				this.#activeJobs.add(job.id);
 				try {
-					logger?.(`Executing job ${job.id} (${job.uid}) ...`);
-					await _executeJob(context, job, jobHandler);
+					this.logger?.(`Executing job ${job.id} (${job.uid}) ...`);
+					await _executeJob(this.context, job, this.jobHandler);
 				} finally {
-					activeJobs.delete(job.id);
+					this.#activeJobs.delete(job.id);
 				}
 			} else {
-				await sleep(pollTimeoutMs);
+				await sleep(this.pollTimeoutMs);
 			}
 		}
 
 		// we are here only if there is a shutdown in progress
 
-		if (activeJobs.size > 0) {
-			logger?.(`Waiting for ${activeJobs.size} jobs to complete...`);
-			while (activeJobs.size > 0) {
+		if (this.#activeJobs.size > 0) {
+			this.logger?.(`Waiting for ${this.#activeJobs.size} jobs to complete...`);
+			while (this.#activeJobs.size > 0) {
 				await sleep(100);
 			}
 		}
 
-		logger?.(`Job processor '${processorId}' stopped`);
+		this.logger?.(`Job processor '${processorId}' stopped`);
 	}
 
-	// This is a graceful stop (will wait for all processors to finish)
-	async function stop() {
-		isShuttingDown = true;
-		await Promise.all(jobProcessors);
-		jobProcessors = [];
-		isShuttingDown = false;
+	/** Will start the jobs processing. Reasonable value of concurrent workers (job processors)
+	 * would be 2-4. */
+	async start(processorsCount: number = 2): Promise<void> {
+		if (this.#isShuttingDown) {
+			const msg = `Cannot start (shutdown in progress detected)`;
+			this.logger?.(msg);
+			throw new Error(msg);
+		}
+
+		await this.#initializeOnce();
+
+		for (let i = 0; i < processorsCount; i++) {
+			const processorId = `processor-${i}`;
+			const processor = this.#processJobs(processorId);
+			this.#jobProcessors.push(processor);
+			this.logger?.(`Processor '${processorId}' initialized`);
+		}
 	}
 
-	if (gracefulSigterm) {
-		process.on("SIGTERM", async () => {
-			logger?.(`SIGTERM detected...`);
-			await stop();
-			// not calling the exit here... this should be a responsibility of the consumer
-			// process.exit(0);
+	/** Will gracefully stop all running job processors */
+	async stop() {
+		this.#isShuttingDown = true;
+		await Promise.all(this.#jobProcessors);
+		this.#jobProcessors = [];
+		this.#isShuttingDown = false;
+	}
+
+	/** Will create new pending job, ready to be processed */
+	async create(
+		type: string,
+		payload: Record<string, any> = {},
+		options: Partial<{
+			max_attempts: JobCreateDTO["max_attempts"];
+			backoff_strategy: JobCreateDTO["backoff_strategy"];
+		}> = {}
+	): Promise<Job> {
+		const { max_attempts = 3, backoff_strategy = BACKOFF_STRATEGY.EXP } =
+			options || {};
+
+		await this.#initializeOnce();
+
+		return _create(this.context, {
+			type,
+			payload,
+			max_attempts,
+			backoff_strategy,
 		});
 	}
 
-	return {
-		/** Will start the jobs processing. Reasonable value of concurrent workers (job processors)
-		 * would be 2-4. */
-		async start(processorsCount: number = 2): Promise<void> {
-			if (isShuttingDown) {
-				const msg = `Cannot start (shutdown in progress detected)`;
-				logger?.(msg);
-				throw new Error(msg);
+	/** Will try to find job row by its uid */
+	async find(
+		uid: string,
+		withAttempts: boolean = false
+	): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
+		await this.#initializeOnce();
+		const job = await _find(this.context, uid);
+		let attempts: null | any[] = null;
+
+		if (job && withAttempts) {
+			attempts = await _logAttemptErrorFetchAll(this.context, job.id);
+		}
+
+		return { job, attempts };
+	}
+
+	/** Will fetch all, optionally filtering by status(es) */
+	async fetchAll(
+		status: undefined | null | Job["status"] | Job["status"][] = null,
+		options: Partial<{
+			limit: number | string;
+			offset: number | string;
+		}> = {}
+	): Promise<Job[]> {
+		await this.#initializeOnce();
+
+		let where = null;
+		if (status) {
+			if (!Array.isArray(status)) status = [status];
+			status = [...new Set(status.filter(Boolean))];
+			if (status.length) {
+				where = `status IN (${status.map(pgQuoteValue).join(",")})`;
 			}
+		}
 
-			await _initializeOnce();
+		return _fetchAll(this.context, where, options);
+	}
 
-			for (let i = 0; i < processorsCount; i++) {
-				const processorId = `processor-${i}`;
-				const processor = _processJobs(processorId);
-				jobProcessors.push(processor);
-				logger?.(`Processor '${processorId}' initialized`);
-			}
-		},
+	/** Will do some maintenance cleanups. It's up to the consumer to decide the
+	 * overall cleanup strategy. */
+	async cleanup() {
+		// this does not make much sense to initialize on cleanup... but keeping the convention
+		await this.#initializeOnce();
+		return _markExpired(this.context);
+		// todo: hard delete old?
+	}
 
-		/** Will gracefully stop all running job processors */
-		stop,
+	/** Will collect some stats... */
+	async healthPreview(sinceHours = 1) {
+		await this.#initializeOnce();
+		return _healthPreview(this.context, sinceHours);
+	}
 
-		/** Will create new pending job, ready to be processed */
-		async create(
-			type: string,
-			payload: Record<string, any> = {},
-			options: Partial<{
-				max_attempts: JobCreateDTO["max_attempts"];
-				backoff_strategy: JobCreateDTO["backoff_strategy"];
-			}> = {}
-		): Promise<Job> {
-			const { max_attempts = 3, backoff_strategy = BACKOFF_STRATEGY.EXP } =
-				options || {};
+	/** Will remove related tables. */
+	uninstall() {
+		return _uninstall(this.context);
+	}
 
-			await _initializeOnce();
+	/** Subscribe callback for a completed job type */
+	onSuccess(type: string, cb: (job: Job) => void) {
+		return this.pubsubSuccess.subscribe(type, cb);
+	}
 
-			return _create(context, {
-				type,
-				payload,
-				max_attempts,
-				backoff_strategy,
-			});
-		},
+	/**
+	 * Subscribe callback for a failed job type. Intentionally not calling this "onError",
+	 * because "errors" are handled and retried... this callback is only triggered
+	 * where all retries failed.
+	 */
+	onFailure(type: string, cb: (job: Job) => void) {
+		return this.pubsubFailure.subscribe(type, cb);
+	}
 
-		/** Will try to find job row by its uid */
-		async find(
-			uid: string,
-			withAttempts: boolean = false
-		): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
-			await _initializeOnce();
-			const job = await _find(context, uid);
-			let attempts: null | any[] = null;
+	/** Helper to unsub all listeners. Used in tests. */
+	unsubscribeAll() {
+		this.pubsubSuccess.unsubscribeAll();
+		this.pubsubFailure.unsubscribeAll();
+	}
 
-			if (job && withAttempts) {
-				attempts = await _logAttemptErrorFetchAll(context, job.id);
-			}
-
-			return { job, attempts };
-		},
-
-		/** Will fetch all, optionally filtering by status(es) */
-		async fetchAll(
-			status: undefined | null | Job["status"] | Job["status"][] = null,
-			options: Partial<{
-				limit: number | string;
-				offset: number | string;
-			}> = {}
-		): Promise<Job[]> {
-			await _initializeOnce();
-
-			let where = null;
-			if (status) {
-				if (!Array.isArray(status)) status = [status];
-				status = [...new Set(status.filter(Boolean))];
-				if (status.length) {
-					where = `status IN (${status.map(pgQuoteValue).join(",")})`;
-				}
-			}
-
-			return _fetchAll(context, where, options);
-		},
-
-		/** Will do some maintenance cleanups. It's up to the consumer to decide the
-		 * overall cleanup strategy. */
-		async cleanup() {
-			// this does not make much sense to initialize on cleanup... but keeping the convention
-			await _initializeOnce();
-			return _markExpired(context);
-			// todo: hard delete old?
-		},
-
-		/** Will collect some stats... */
-		async healthPreview(sinceHours = 1) {
-			await _initializeOnce();
-			return _healthPreview(context, sinceHours);
-		},
-
-		/** Will remove related tables. */
-		uninstall() {
-			return _uninstall(context);
-		},
-
-		/** Subscribe callback for a completed job type */
-		onSuccess(type: string, cb: (job: Job) => void) {
-			return pubsubSuccess.subscribe(type, cb);
-		},
-
-		/**
-		 * Subscribe callback for a failed job type. Intentionally not calling this "onError",
-		 * because "errors" are handled and retried... this callback is only triggered
-		 * where all retries failed.
-		 */
-		onFailure(type: string, cb: (job: Job) => void) {
-			return pubsubFailure.subscribe(type, cb);
-		},
-
-		/** Helper to unsub all listeners. Used in tests. */
-		unsubscribeAll() {
-			pubsubSuccess.unsubscribeAll();
-			pubsubFailure.unsubscribeAll();
-		},
-	};
-}
-
-/** For manual hackings (used in tests). */
-export function __jobsSchema(tablePrefix: string = ""): {
-	drop: string;
-	create: string;
-} {
-	const context = { tableNames: tableNames(tablePrefix) };
-	return {
-		drop: _schemaDrop(context),
-		create: _schemaCreate(context),
-	};
+	/** For manual hackings (used in tests). */
+	static __schema(tablePrefix: string = ""): {
+		drop: string;
+		create: string;
+	} {
+		const context = { tableNames: tableNames(tablePrefix) };
+		return {
+			drop: _schemaDrop(context),
+			create: _schemaCreate(context),
+		};
+	}
 }

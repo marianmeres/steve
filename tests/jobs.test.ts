@@ -2,11 +2,10 @@
 
 import pg from "pg";
 import {
-	__jobsSchema,
 	ATTEMPT_STATUS,
 	BACKOFF_STRATEGY,
-	createJobs,
 	JOB_STATUS,
+	Jobs,
 	type Job,
 	type JobHandler,
 } from "../src/mod.ts";
@@ -21,10 +20,10 @@ const pollTimeoutMs = 100; // be faster in tests
 
 async function _createJobs(db: pg.Client, jobHandler: JobHandler) {
 	// so we're recreating the schema on each test
-	await db.query(__jobsSchema(tablePrefix).drop);
+	await db.query(Jobs.__schema(tablePrefix).drop);
 	_logger = [];
 
-	const jobs = await createJobs({
+	const jobs = new Jobs({
 		db,
 		jobHandler,
 		logger: (...args: any) => _logger.push(args[0]),
