@@ -21,9 +21,15 @@ export async function _fetchAll(
 		limit: number | string;
 		offset: number | string;
 		asc: number | string | boolean;
+		sinceMinutesAgo: number;
 	}> = {}
 ): Promise<Job[]> {
-	const { limit = 10, offset = 0, asc = false } = options || {};
+	const {
+		limit = 10,
+		offset = 0,
+		asc = false,
+		sinceMinutesAgo = 30,
+	} = options || {};
 
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
@@ -32,6 +38,7 @@ export async function _fetchAll(
 	const sql = `
 		SELECT * FROM ${tableJobs}
 		WHERE TRUE ${where ? `AND (${where}) ` : ""}
+			AND created_at > NOW() - INTERVAL '${sinceMinutesAgo} minute'
 		ORDER BY id ${parseBoolean(asc) ? "asc" : "desc"}
 		LIMIT $1 OFFSET $2
 	`;

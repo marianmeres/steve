@@ -5,7 +5,7 @@ import type { JobContext } from "../jobs.ts";
 /** Will collect some basic stats about the jobs since `sinceHours` */
 export async function _healthPreview(
 	context: JobContext,
-	sinceHours = 1
+	sinceMinutesAgo = 60
 ): Promise<any[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
@@ -16,7 +16,7 @@ export async function _healthPreview(
 			COUNT(*) as count,
 			AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_seconds
 		FROM ${tableJobs}  
-		WHERE created_at > NOW() - INTERVAL '${sinceHours} hour'
+		WHERE created_at > NOW() - INTERVAL '${sinceMinutesAgo} minute'
 		GROUP BY status;`
 	);
 

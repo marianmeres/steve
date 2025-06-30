@@ -194,7 +194,7 @@ export class Jobs {
 			if (job) {
 				this.#activeJobs.add(job.id);
 				try {
-					this.logger?.(`Executing job ${job.id} (${job.uid}) ...`);
+					this.logger?.(`Executing job ${job.id}...`);
 					await _executeJob(this.context, job, this.jobHandler);
 				} finally {
 					this.#activeJobs.delete(job.id);
@@ -288,6 +288,7 @@ export class Jobs {
 			limit: number | string;
 			offset: number | string;
 			asc: number | string | boolean;
+			sinceMinutesAgo: number;
 		}> = {}
 	): Promise<Job[]> {
 		await this.#initializeOnce();
@@ -314,9 +315,9 @@ export class Jobs {
 	}
 
 	/** Will collect some stats... */
-	async healthPreview(sinceHours = 1): Promise<any[]> {
+	async healthPreview(sinceMinutesAgo = 60): Promise<any[]> {
 		await this.#initializeOnce();
-		return _healthPreview(this.context, sinceHours);
+		return _healthPreview(this.context, sinceMinutesAgo);
 	}
 
 	/** Will remove related tables. */
@@ -324,18 +325,24 @@ export class Jobs {
 		return _uninstall(this.context);
 	}
 
-	/** Subscribe callback for a completed job type */
-	onSuccess(type: string, cb: (job: Job) => void): Unsubscriber {
-		return this.pubsubSuccess.subscribe(type, cb);
+	/** Subscribe callback for a completed job type(s) */
+	onSuccess(type: string | string[], cb: (job: Job) => void): Unsubscriber {
+		const types = Array.isArray(type) ? type : [type];
+		const unsubs: any[] = [];
+		types.forEach((t) => unsubs.push(this.pubsubSuccess.subscribe(t, cb)));
+		return () => unsubs.forEach((u) => u());
 	}
 
 	/**
-	 * Subscribe callback for a failed job type. Intentionally not calling this "onError",
+	 * Subscribe callback for a failed job type(s). Intentionally not calling this "onError",
 	 * because "errors" are handled and retried... this callback is only triggered
 	 * where all retries failed.
 	 */
-	onFailure(type: string, cb: (job: Job) => void): Unsubscriber {
-		return this.pubsubFailure.subscribe(type, cb);
+	onFailure(type: string | string[], cb: (job: Job) => void): Unsubscriber {
+		const types = Array.isArray(type) ? type : [type];
+		const unsubs: any[] = [];
+		types.forEach((t) => unsubs.push(this.pubsubFailure.subscribe(t, cb)));
+		return () => unsubs.forEach((u) => u());
 	}
 
 	/** Helper to unsub all listeners. Used in tests. */

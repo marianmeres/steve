@@ -9,8 +9,8 @@ export async function _create(
 
 	const { rows } = await db.query(
 		`INSERT INTO ${tableJobs} (type, payload, max_attempts, backoff_strategy)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *`,
+		VALUES ($1, $2, $3, $4)
+		RETURNING *`,
 		[
 			job.type,
 			JSON.stringify(job.payload ?? {}),

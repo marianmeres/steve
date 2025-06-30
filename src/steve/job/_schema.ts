@@ -39,13 +39,15 @@ export function _schemaCreate(context: Pick<JobContext, "tableNames">): string {
 		-- This is a debug log table
 		CREATE TABLE IF NOT EXISTS ${tableAttempts} (
 			id              	SERIAL PRIMARY KEY,
-			job_id          	INTEGER REFERENCES ${tableJobs}(id),
+			job_id          	INTEGER NOT NULL,
 			attempt_number  	INTEGER NOT NULL,
 			started_at      	TIMESTAMPTZ DEFAULT NOW(),
 			completed_at    	TIMESTAMPTZ,
 			status          	VARCHAR(20), -- see ATTEMPT_STATUS
 			error_message   	TEXT,
-			error_details   	JSONB
+			error_details   	JSONB,
+
+			FOREIGN KEY (job_id) REFERENCES ${tableJobs}(id) ON UPDATE CASCADE ON DELETE CASCADE
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_status_run_at ON ${tableJobs}(status, run_at);
@@ -60,11 +62,16 @@ export async function _initialize(
 	hard = false
 ): Promise<void> {
 	const { db } = context;
+
+	await db.query("BEGIN");
+
 	const sql = [hard && _schemaDrop(context), _schemaCreate(context)]
 		.filter(Boolean)
 		.join("\n");
 
 	await db.query(sql);
+
+	await db.query("COMMIT");
 }
 
 export async function _uninstall(context: JobContext): Promise<void> {

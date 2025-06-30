@@ -1,7 +1,7 @@
 import { JOB_STATUS, type JobContext } from "../jobs.ts";
 
 /**
- * Will mark jobs which are "running" too long as expired (the may have crashed mid-job).
+ * Will mark jobs which are "running" too long as expired (they may have crashed mid-job).
  * This is just a cleanup (the inaccurate "running" state has no effect on the system).
  *
  * Note: we could restart (mark as pending) them instead, but that might create confusion
