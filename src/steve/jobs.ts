@@ -229,12 +229,12 @@ export class Jobs {
 	}
 
 	/** Does any handler exist for given job type? */
-	hasHandler(type: string) {
+	hasHandler(type: string): boolean {
 		return !!this.jobHandlers[type];
 	}
 
 	/** Will (un)set handler for given type*/
-	setHandler(type: string, handler: JobHandler | undefined | null) {
+	setHandler(type: string, handler: JobHandler | undefined | null): Jobs {
 		this.jobHandlers[type] = handler;
 		return this;
 	}
