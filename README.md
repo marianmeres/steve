@@ -31,9 +31,17 @@ const jobs = new Jobs({
         // Must throw on error.
         // Returned data will be available as the `result` prop.
     },
+    // or, alternatively specify a jobHandlers by type
+    jobHandlers: {
+        my_job_type: myJobHandler,
+        // ...
+    },
     // how long should the worker be idle before trying to claim a new job
     pollIntervalMs, // default 1_000
 });
+
+// later, as new job types are needed, just re/set handler
+jobs.setHandler('my_type', myHandler);
 
 // kicks off the job processing (with, let's say, 2 concurrent processors)
 jobs.start(2);
