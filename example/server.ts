@@ -40,11 +40,10 @@ jobs.onFailure("*", (j: Job) => {
 	console.log("FAILED", j.id);
 });
 
-function main() {
-	jobs.start(2);
+async function main() {
+	await jobs.start(2);
 
-	// keep spawning some dummy jobs (spawn frequency is slower than handling polling so
-	// we should not bloat too much)
+	// keep spawning some dummy jobs...
 	async function spawn() {
 		const type = TYPES.at(getRandomIntInclusive(0, TYPES.length - 1))!;
 		await jobs.create(type, {}, { max_attempts: 2 });

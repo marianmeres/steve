@@ -67,6 +67,11 @@ jobs.onFailure('my_important_job_type', (failed: Job) => {
 jobs.onSuccess('my_job_type', (job: Job) => {
     console.log(job.result);
 });
+
+// also, every attempt can be listened to as well
+jobs.onAttempt('my_job_type', (job: Job) => {
+    console.log('maybe success, maybe failure, maybe planned retry', job.status);
+})
 ```
 
 ## Examining the job manually
@@ -123,3 +128,25 @@ interface JobAttempt {
     error_details: null | Record<"stack" | string, any>;
 }
 ```
+
+## Jobs monitor example
+
+![](./demo-monitor.png "Demo monitor")
+
+Steve comes with toy example of jobs monitoring ([server](example/server.ts) 
+and [client](example/index.html)). To run it locally follow these steps:
+
+```shell
+git clone git@github.com:marianmeres/steve.git
+cd steve
+cp .env.example .env
+```
+
+Now edit the `.env` and set `EXAMPLE_PG_*` postgres credentials. Then, finally, 
+run the server:
+
+```shell
+deno task example
+```
+
+Once deps are installed and server is running, just visit http://localhost:8000.

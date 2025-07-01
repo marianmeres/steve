@@ -140,6 +140,7 @@ testsRunner([
 			let errorCounter = 0;
 			let failureCounter = 0;
 			let executionCounter = 0;
+			let attemptCounter = 0;
 
 			const jobs = await _createJobs(db, async (j: Job) => {
 				executionCounter++;
@@ -155,6 +156,7 @@ testsRunner([
 			//
 			jobs.onSuccess("foo", (_job: Job) => successCounter++);
 			jobs.onFailure("foo", (_job: Job) => failureCounter++);
+			jobs.onAttempt("foo", (_job: Job) => attemptCounter++);
 
 			//
 			const { uid } = await jobs.create(
@@ -172,6 +174,7 @@ testsRunner([
 			assertEquals(errorCounter, 2);
 			assertEquals(executionCounter, 3);
 			assertEquals(failureCounter, 0);
+			assertEquals(attemptCounter, 3);
 
 			// we must see 3 logged executions system messages
 			let _loggerExecCounter = 0;

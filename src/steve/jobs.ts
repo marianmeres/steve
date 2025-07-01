@@ -54,6 +54,7 @@ export interface JobContext {
 	logger: Logger;
 	pubsubSuccess: ReturnType<typeof createPubSub>;
 	pubsubFailure: ReturnType<typeof createPubSub>;
+	pubsubAttempt: ReturnType<typeof createPubSub>;
 }
 
 /** The job row */
@@ -138,6 +139,7 @@ export class Jobs {
 	readonly tablePrefix: string;
 	readonly pubsubSuccess: ReturnType<typeof createPubSub> = createPubSub();
 	readonly pubsubFailure: ReturnType<typeof createPubSub> = createPubSub();
+	readonly pubsubAttempt: ReturnType<typeof createPubSub> = createPubSub();
 	readonly context: JobContext;
 
 	#isShuttingDown = false;
@@ -168,14 +170,15 @@ export class Jobs {
 			logger: this.logger,
 			pubsubSuccess: this.pubsubSuccess,
 			pubsubFailure: this.pubsubFailure,
+			pubsubAttempt: this.pubsubAttempt,
 		};
 	}
 
 	async #initializeOnce() {
 		if (!this.#wasInitialized) {
 			await _initialize(this.context);
-			this.logger?.(`System initialized`);
 			this.#wasInitialized = true;
+			this.logger?.(`System initialized`);
 
 			if (this.gracefulSigterm) {
 				process.on("SIGTERM", async () => {
@@ -325,23 +328,34 @@ export class Jobs {
 		return _uninstall(this.context);
 	}
 
-	/** Subscribe callback for a completed job type(s) */
+	/** Subscribe callback to a completed job type(s) */
 	onSuccess(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		const types = Array.isArray(type) ? type : [type];
-		const unsubs: any[] = [];
-		types.forEach((t) => unsubs.push(this.pubsubSuccess.subscribe(t, cb)));
-		return () => unsubs.forEach((u) => u());
+		return this.#onEvent(this.pubsubSuccess, type, cb);
 	}
 
 	/**
-	 * Subscribe callback for a failed job type(s). Intentionally not calling this "onError",
+	 * Subscribe callback to a failed job type(s). Intentionally not calling this "onError",
 	 * because "errors" are handled and retried... this callback is only triggered
 	 * where all retries failed.
 	 */
 	onFailure(type: string | string[], cb: (job: Job) => void): Unsubscriber {
+		return this.#onEvent(this.pubsubFailure, type, cb);
+	}
+
+	/** Subcribe callback to every attempt */
+	onAttempt(type: string | string[], cb: (job: Job) => void): Unsubscriber {
+		return this.#onEvent(this.pubsubAttempt, type, cb);
+	}
+
+	/** Internal DRY helper */
+	#onEvent(
+		pubsub: ReturnType<typeof createPubSub>,
+		type: string | string[],
+		cb: (job: Job) => void
+	): Unsubscriber {
 		const types = Array.isArray(type) ? type : [type];
 		const unsubs: any[] = [];
-		types.forEach((t) => unsubs.push(this.pubsubFailure.subscribe(t, cb)));
+		types.forEach((t) => unsubs.push(pubsub.subscribe(t, cb)));
 		return () => unsubs.forEach((u) => u());
 	}
 

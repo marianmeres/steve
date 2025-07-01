@@ -61,14 +61,17 @@ export async function _handleJobFailure(
 			backoffMs = Math.pow(2, job.attempts) * 1000; // 2^attempts seconds
 		}
 
-		await db.query(
-			`UPDATE ${tableJobs}
-			SET status = '${JOB_STATUS.PENDING}',
-				run_at = NOW() + INTERVAL '${backoffMs} milliseconds',
-				updated_at = NOW()
-			WHERE id = $1`,
-			[job.id]
-		);
+		failed = (
+			await db.query(
+				`UPDATE ${tableJobs}
+				SET status = '${JOB_STATUS.PENDING}',
+					run_at = NOW() + INTERVAL '${backoffMs} milliseconds',
+					updated_at = NOW()
+				WHERE id = $1
+				RETURNING *`,
+				[job.id]
+			)
+		).rows[0];
 	}
 
 	await db.query("COMMIT");
