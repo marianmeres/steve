@@ -18,6 +18,7 @@ import {
 } from "./job/_schema.ts";
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
+import { createLogger, type Logger } from "./utils/logger.ts";
 
 /** Job statuses */
 export const JOB_STATUS = {
@@ -41,8 +42,10 @@ export const BACKOFF_STRATEGY = {
 	// ... add another if needed ...
 };
 
-/** Job handler worker. Returned result will be saved under `result` */
+/** "Global" job handler worker. Returned result will be saved under `result` */
 export type JobHandler = (job: Job) => any | Promise<any>;
+
+export type JobHandlersMap = Record<string, JobHandler | null | undefined>;
 
 /** Internal context passed to job utilities */
 export interface JobContext {
@@ -99,12 +102,11 @@ export interface JobCreateDTO {
 	backoff_strategy?: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
 }
 
-/** Provided logger */
-export type Logger = (...args: any[]) => void;
-
 /** Factory options */
 export interface JobsOptions {
-	jobHandler: JobHandler;
+	/** One of the two must be present */
+	jobHandler?: JobHandler;
+	jobHandlers?: JobHandlersMap;
 	/** pg.Pool or pg.Client instance */
 	db: pg.Pool | pg.Client;
 	/** Useful for non-public schema. Leave empty or provide a schema with appending dot "myschema." */
@@ -117,10 +119,6 @@ export interface JobsOptions {
 	gracefulSigterm?: boolean;
 }
 
-const defaultLogger = (...args: any[]) => {
-	console.log(`[jobs] [${new Date().toISOString()}]`, ...args);
-};
-
 /**  */
 function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 	return {
@@ -132,7 +130,8 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 /** Core jobs manager  */
 export class Jobs {
 	#db: pg.Pool | pg.Client;
-	readonly jobHandler: JobHandler;
+	readonly jobHandler: JobHandler | undefined;
+	readonly jobHandlers: JobHandlersMap;
 	readonly pollTimeoutMs: number;
 	readonly logger: Logger;
 	readonly gracefulSigterm: boolean;
@@ -150,15 +149,17 @@ export class Jobs {
 	constructor(options: JobsOptions) {
 		const {
 			jobHandler,
+			jobHandlers = {},
 			db,
 			pollTimeoutMs = 1_000,
 			tablePrefix = "",
-			logger = defaultLogger,
+			logger = createLogger("jobs"),
 			gracefulSigterm = true,
 		} = options || {};
 
 		this.#db = db;
 		this.jobHandler = jobHandler;
+		this.jobHandlers = jobHandlers;
 		this.pollTimeoutMs = pollTimeoutMs;
 		this.tablePrefix = tablePrefix;
 		this.logger = logger;
@@ -178,11 +179,11 @@ export class Jobs {
 		if (!this.#wasInitialized) {
 			await _initialize(this.context);
 			this.#wasInitialized = true;
-			this.logger?.(`System initialized`);
+			this.logger?.debug?.(`System initialized`);
 
 			if (this.gracefulSigterm) {
 				process.on("SIGTERM", async () => {
-					this.logger?.(`SIGTERM detected...`);
+					this.logger?.debug?.(`SIGTERM detected...`);
 					await this.stop();
 					// not calling the exit here... this should be a responsibility of the consumer
 					// process.exit(0);
@@ -192,13 +193,19 @@ export class Jobs {
 	}
 
 	async #processJobs(processorId: string): Promise<void> {
+		const noopHandler = (_job: Job) => ({ noop: true });
 		while (!this.#isShuttingDown) {
 			const job = await _claimNextJob(this.context);
 			if (job) {
 				this.#activeJobs.add(job.id);
 				try {
-					this.logger?.(`Executing job ${job.id}...`);
-					await _executeJob(this.context, job, this.jobHandler);
+					this.logger?.debug?.(`Executing job ${job.id}...`);
+					await _executeJob(
+						this.context,
+						job,
+						// try handler by type, fallback to global, fallback to noop
+						this.jobHandlers[job.type] ?? this.jobHandler ?? noopHandler
+					);
 				} finally {
 					this.#activeJobs.delete(job.id);
 				}
@@ -210,13 +217,26 @@ export class Jobs {
 		// we are here only if there is a shutdown in progress
 
 		if (this.#activeJobs.size > 0) {
-			this.logger?.(`Waiting for ${this.#activeJobs.size} jobs to complete...`);
+			this.logger?.debug?.(
+				`Waiting for ${this.#activeJobs.size} jobs to complete...`
+			);
 			while (this.#activeJobs.size > 0) {
 				await sleep(100);
 			}
 		}
 
-		this.logger?.(`Job processor '${processorId}' stopped`);
+		this.logger?.debug?.(`Job processor '${processorId}' stopped`);
+	}
+
+	/** Does any handler exist for given job type? */
+	hasHandler(type: string) {
+		return !!this.jobHandlers[type];
+	}
+
+	/** Will (un)set handler for given type*/
+	setHandler(type: string, handler: JobHandler | undefined | null) {
+		this.jobHandlers[type] = handler;
+		return this;
 	}
 
 	/** Will start the jobs processing. Reasonable value of concurrent workers (job processors)
@@ -224,7 +244,7 @@ export class Jobs {
 	async start(processorsCount: number = 2): Promise<void> {
 		if (this.#isShuttingDown) {
 			const msg = `Cannot start (shutdown in progress detected)`;
-			this.logger?.(msg);
+			this.logger?.error?.(msg);
 			throw new Error(msg);
 		}
 
@@ -234,7 +254,7 @@ export class Jobs {
 			const processorId = `processor-${i}`;
 			const processor = this.#processJobs(processorId);
 			this.#jobProcessors.push(processor);
-			this.logger?.(`Processor '${processorId}' initialized`);
+			this.logger?.debug?.(`Processor '${processorId}' initialized`);
 		}
 	}
 

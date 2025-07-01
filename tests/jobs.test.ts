@@ -5,6 +5,7 @@ import {
 	ATTEMPT_STATUS,
 	BACKOFF_STRATEGY,
 	JOB_STATUS,
+	type JobHandlersMap,
 	Jobs,
 	type Job,
 	type JobHandler,
@@ -18,15 +19,22 @@ let _logger: any = [];
 const tablePrefix = "_foo_";
 const pollTimeoutMs = 100; // be faster in tests
 
-async function _createJobs(db: pg.Client, jobHandler: JobHandler) {
+async function _createJobs(
+	db: pg.Client,
+	jobHandler?: JobHandler,
+	jobHandlers?: JobHandlersMap
+) {
 	// so we're recreating the schema on each test
 	await db.query(Jobs.__schema(tablePrefix).drop);
 	_logger = [];
 
+	const log = (...args: any) => _logger.push(args[0]);
+
 	return new Jobs({
 		db,
 		jobHandler,
-		logger: (...args: any) => _logger.push(args[0]),
+		jobHandlers,
+		logger: { debug: log, error: log, warn: log, log },
 		// must be turned off in tests... (it leaves active process listener, which deno complains about)
 		gracefulSigterm: false,
 		pollTimeoutMs,
@@ -252,6 +260,56 @@ testsRunner([
 			assertEquals(all[0].status, JOB_STATUS.FAILED);
 
 			assertEquals(await jobs.fetchAll(JOB_STATUS.PENDING), []);
+		},
+		// only: true,
+	},
+	{
+		name: "custom handler by type",
+		async fn({ db }) {
+			const jobs = await _createJobs(db);
+
+			const createFoo = () =>
+				jobs.create(
+					"foo",
+					{ bar: "baz" },
+					{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 }
+				);
+
+			let j = await createFoo();
+
+			await jobs.start(1);
+
+			let r = await jobs.find(j.uid);
+
+			// no handler exists
+			assertEquals(r.job.result, { noop: true });
+
+			// register handler now
+			jobs.setHandler("foo", (_j: Job) => ({ foo: "handler" }));
+
+			j = await createFoo();
+
+			await sleep(300);
+
+			r = await jobs.find(j.uid);
+
+			// now must be handler
+			assertEquals(r.job.result, { foo: "handler" });
+
+			// now unset handler
+			jobs.setHandler("foo", null);
+
+			j = await createFoo();
+			await sleep(300);
+
+			r = await jobs.find(j.uid);
+
+			// noop again
+			assertEquals(r.job.result, { noop: true });
+
+			// teardown
+			await jobs.stop();
+			jobs.unsubscribeAll();
 		},
 		// only: true,
 	},

@@ -51,7 +51,7 @@ export async function _handleJobFailure(
 		const defaultStrategy = BACKOFF_STRATEGY.EXP;
 
 		if (!whitelist.includes(strategy)) {
-			context?.logger?.(
+			context?.logger?.warn?.(
 				`Unknown backoff strategy '${strategy}' (falling back to '${defaultStrategy}').`
 			);
 			strategy = defaultStrategy;
