@@ -44,8 +44,11 @@ export const BACKOFF_STRATEGY = {
 
 /** "Global" job handler worker. Returned result will be saved under `result` */
 export type JobHandler = (job: Job) => any | Promise<any>;
-
 export type JobHandlersMap = Record<string, JobHandler | null | undefined>;
+
+/** This is technically the same as JobHandler, but used in different situation (after the
+ * job was handled, so naming it differently just to avoid confusion) */
+export type JobAwareFn = (job: Job) => any | Promise<any>;
 
 /** Internal context passed to job utilities */
 export interface JobContext {
@@ -58,6 +61,8 @@ export interface JobContext {
 	pubsubSuccess: ReturnType<typeof createPubSub>;
 	pubsubFailure: ReturnType<typeof createPubSub>;
 	pubsubAttempt: ReturnType<typeof createPubSub>;
+	pubsubDone: ReturnType<typeof createPubSub>;
+	onDoneCallbacks: Map<string, JobAwareFn>;
 }
 
 /** The job row */
@@ -129,17 +134,20 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 
 /** Core jobs manager  */
 export class Jobs {
-	#db: pg.Pool | pg.Client;
-	readonly jobHandler: JobHandler | undefined;
-	readonly jobHandlers: JobHandlersMap;
 	readonly pollTimeoutMs: number;
-	readonly logger: Logger;
 	readonly gracefulSigterm: boolean;
 	readonly tablePrefix: string;
-	readonly pubsubSuccess: ReturnType<typeof createPubSub> = createPubSub();
-	readonly pubsubFailure: ReturnType<typeof createPubSub> = createPubSub();
-	readonly pubsubAttempt: ReturnType<typeof createPubSub> = createPubSub();
-	readonly context: JobContext;
+
+	#db: pg.Pool | pg.Client;
+	#jobHandler: JobHandler | undefined;
+	#jobHandlers: JobHandlersMap;
+	#logger: Logger;
+	#onDoneCallbacks: Map<string, JobAwareFn> = new Map();
+	#pubsubSuccess: ReturnType<typeof createPubSub> = createPubSub();
+	#pubsubFailure: ReturnType<typeof createPubSub> = createPubSub();
+	#pubsubAttempt: ReturnType<typeof createPubSub> = createPubSub();
+	#pubsubDone: ReturnType<typeof createPubSub> = createPubSub();
+	#context: JobContext;
 
 	#isShuttingDown = false;
 	#wasInitialized = false;
@@ -158,32 +166,34 @@ export class Jobs {
 		} = options || {};
 
 		this.#db = db;
-		this.jobHandler = jobHandler;
-		this.jobHandlers = jobHandlers;
+		this.#jobHandler = jobHandler;
+		this.#jobHandlers = jobHandlers;
+		this.#logger = logger;
 		this.pollTimeoutMs = pollTimeoutMs;
 		this.tablePrefix = tablePrefix;
-		this.logger = logger;
 		this.gracefulSigterm = gracefulSigterm;
 
-		this.context = {
+		this.#context = {
 			db: this.#db,
 			tableNames: tableNames(tablePrefix),
-			logger: this.logger,
-			pubsubSuccess: this.pubsubSuccess,
-			pubsubFailure: this.pubsubFailure,
-			pubsubAttempt: this.pubsubAttempt,
+			logger: this.#logger,
+			pubsubSuccess: this.#pubsubSuccess,
+			pubsubFailure: this.#pubsubFailure,
+			pubsubAttempt: this.#pubsubAttempt,
+			pubsubDone: this.#pubsubDone,
+			onDoneCallbacks: this.#onDoneCallbacks,
 		};
 	}
 
 	async #initializeOnce() {
 		if (!this.#wasInitialized) {
-			await _initialize(this.context);
+			await _initialize(this.#context);
 			this.#wasInitialized = true;
-			this.logger?.debug?.(`System initialized`);
+			this.#logger?.debug?.(`System initialized`);
 
 			if (this.gracefulSigterm) {
 				process.on("SIGTERM", async () => {
-					this.logger?.debug?.(`SIGTERM detected...`);
+					this.#logger?.debug?.(`SIGTERM detected...`);
 					await this.stop();
 					// not calling the exit here... this should be a responsibility of the consumer
 					// process.exit(0);
@@ -195,16 +205,16 @@ export class Jobs {
 	async #processJobs(processorId: string): Promise<void> {
 		const noopHandler = (_job: Job) => ({ noop: true });
 		while (!this.#isShuttingDown) {
-			const job = await _claimNextJob(this.context);
+			const job = await _claimNextJob(this.#context);
 			if (job) {
 				this.#activeJobs.add(job.id);
 				try {
-					this.logger?.debug?.(`Executing job ${job.id}...`);
+					this.#logger?.debug?.(`Executing job ${job.id}...`);
 					await _executeJob(
-						this.context,
+						this.#context,
 						job,
 						// try handler by type, fallback to global, fallback to noop
-						this.jobHandlers[job.type] ?? this.jobHandler ?? noopHandler
+						this.#jobHandlers[job.type] ?? this.#jobHandler ?? noopHandler
 					);
 				} finally {
 					this.#activeJobs.delete(job.id);
@@ -217,7 +227,7 @@ export class Jobs {
 		// we are here only if there is a shutdown in progress
 
 		if (this.#activeJobs.size > 0) {
-			this.logger?.debug?.(
+			this.#logger?.debug?.(
 				`Waiting for ${this.#activeJobs.size} jobs to complete...`
 			);
 			while (this.#activeJobs.size > 0) {
@@ -225,17 +235,17 @@ export class Jobs {
 			}
 		}
 
-		this.logger?.debug?.(`Job processor '${processorId}' stopped`);
+		this.#logger?.debug?.(`Job processor '${processorId}' stopped`);
 	}
 
 	/** Does any handler exist for given job type? */
 	hasHandler(type: string): boolean {
-		return !!this.jobHandlers[type];
+		return !!this.#jobHandlers[type];
 	}
 
 	/** Will (un)set handler for given type*/
 	setHandler(type: string, handler: JobHandler | undefined | null): Jobs {
-		this.jobHandlers[type] = handler;
+		this.#jobHandlers[type] = handler;
 		return this;
 	}
 
@@ -244,7 +254,7 @@ export class Jobs {
 	async start(processorsCount: number = 2): Promise<void> {
 		if (this.#isShuttingDown) {
 			const msg = `Cannot start (shutdown in progress detected)`;
-			this.logger?.error?.(msg);
+			this.#logger?.error?.(msg);
 			throw new Error(msg);
 		}
 
@@ -254,7 +264,7 @@ export class Jobs {
 			const processorId = `processor-${i}`;
 			const processor = this.#processJobs(processorId);
 			this.#jobProcessors.push(processor);
-			this.logger?.debug?.(`Processor '${processorId}' initialized`);
+			this.#logger?.debug?.(`Processor '${processorId}' initialized`);
 		}
 	}
 
@@ -273,19 +283,24 @@ export class Jobs {
 		options: Partial<{
 			max_attempts: JobCreateDTO["max_attempts"];
 			backoff_strategy: JobCreateDTO["backoff_strategy"];
-		}> = {}
+		}> = {},
+		onDone?: JobAwareFn
 	): Promise<Job> {
 		const { max_attempts = 3, backoff_strategy = BACKOFF_STRATEGY.EXP } =
 			options || {};
 
 		await this.#initializeOnce();
 
-		return _create(this.context, {
-			type,
-			payload,
-			max_attempts,
-			backoff_strategy,
-		});
+		return _create(
+			this.#context,
+			{
+				type,
+				payload,
+				max_attempts,
+				backoff_strategy,
+			},
+			onDone
+		);
 	}
 
 	/** Will try to find job row by its uid */
@@ -294,11 +309,11 @@ export class Jobs {
 		withAttempts: boolean = false
 	): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
 		await this.#initializeOnce();
-		const job = await _find(this.context, uid);
+		const job = await _find(this.#context, uid);
 		let attempts: null | any[] = null;
 
 		if (job && withAttempts) {
-			attempts = await _logAttemptErrorFetchAll(this.context, job.id);
+			attempts = await _logAttemptErrorFetchAll(this.#context, job.id);
 		}
 
 		return { job, attempts };
@@ -325,7 +340,7 @@ export class Jobs {
 			}
 		}
 
-		return _fetchAll(this.context, where, options);
+		return _fetchAll(this.#context, where, options);
 	}
 
 	/** Will do some maintenance cleanups. It's up to the consumer to decide the
@@ -333,24 +348,29 @@ export class Jobs {
 	async cleanup(): Promise<void> {
 		// this does not make much sense to initialize on cleanup... but keeping the convention
 		await this.#initializeOnce();
-		return _markExpired(this.context);
+		return _markExpired(this.#context);
 		// todo: hard delete old?
 	}
 
 	/** Will collect some stats... */
 	async healthPreview(sinceMinutesAgo = 60): Promise<any[]> {
 		await this.#initializeOnce();
-		return _healthPreview(this.context, sinceMinutesAgo);
+		return _healthPreview(this.#context, sinceMinutesAgo);
 	}
 
 	/** Will remove related tables. */
 	uninstall(): Promise<void> {
-		return _uninstall(this.context);
+		return _uninstall(this.#context);
+	}
+
+	/** Subscribe callback to processed (done) job, which is either success or failure */
+	onDone(type: string | string[], cb: (job: Job) => void): Unsubscriber {
+		return this.#onEvent(this.#pubsubDone, type, cb);
 	}
 
 	/** Subscribe callback to a completed job type(s) */
 	onSuccess(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.pubsubSuccess, type, cb);
+		return this.#onEvent(this.#pubsubSuccess, type, cb);
 	}
 
 	/**
@@ -359,12 +379,12 @@ export class Jobs {
 	 * where all retries failed.
 	 */
 	onFailure(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.pubsubFailure, type, cb);
+		return this.#onEvent(this.#pubsubFailure, type, cb);
 	}
 
-	/** Subcribe callback to every attempt */
+	/** Subscribe callback to every attempt */
 	onAttempt(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.pubsubAttempt, type, cb);
+		return this.#onEvent(this.#pubsubAttempt, type, cb);
 	}
 
 	/** Internal DRY helper */
@@ -381,8 +401,21 @@ export class Jobs {
 
 	/** Helper to unsub all listeners. Used in tests. */
 	unsubscribeAll(): void {
-		this.pubsubSuccess.unsubscribeAll();
-		this.pubsubFailure.unsubscribeAll();
+		this.#pubsubSuccess.unsubscribeAll();
+		this.#pubsubFailure.unsubscribeAll();
+		this.#pubsubAttempt.unsubscribeAll();
+		this.#pubsubDone.unsubscribeAll();
+	}
+
+	/** For internal debugging */
+	__debugDump() {
+		return {
+			pubsubSuccess: this.#pubsubSuccess.__dump(),
+			pubsubFailure: this.#pubsubFailure.__dump(),
+			pubsubAttempt: this.#pubsubAttempt.__dump(),
+			pubsubDone: this.#pubsubDone.__dump(),
+			onDoneCallbacks: Object.fromEntries(this.#onDoneCallbacks.entries()),
+		};
 	}
 
 	/** For manual hackings (used in tests). */

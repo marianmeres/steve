@@ -4,7 +4,7 @@ import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
 import { _logAttemptSuccess } from "./_log-attempt.ts";
 
 /** Will mark the job as completed and log success. */
-export async function _completeJob(
+export async function _handleJobSuccess(
 	context: JobContext,
 	jobId: number,
 	attemptId: number,

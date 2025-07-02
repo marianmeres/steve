@@ -1,8 +1,9 @@
-import type { Job, JobContext, JobCreateDTO } from "../jobs.ts";
+import type { Job, JobAwareFn, JobContext, JobCreateDTO } from "../jobs.ts";
 
 export async function _create(
 	context: JobContext,
-	job: JobCreateDTO
+	data: JobCreateDTO,
+	onDone?: JobAwareFn
 ): Promise<Job> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
@@ -12,12 +13,18 @@ export async function _create(
 		VALUES ($1, $2, $3, $4)
 		RETURNING *`,
 		[
-			job.type,
-			JSON.stringify(job.payload ?? {}),
-			job.max_attempts ?? null,
-			job.backoff_strategy ?? null,
+			data.type,
+			JSON.stringify(data.payload ?? {}),
+			data.max_attempts ?? null,
+			data.backoff_strategy ?? null,
 		]
 	);
 
-	return rows[0] as Job;
+	const job = rows[0] as Job;
+
+	if (typeof onDone === "function") {
+		context.onDoneCallbacks.set(job.uid, onDone);
+	}
+
+	return job;
 }

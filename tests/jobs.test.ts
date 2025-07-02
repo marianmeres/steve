@@ -144,27 +144,30 @@ testsRunner([
 	{
 		name: "successful retry",
 		async fn({ db }) {
-			let successCounter = 0;
-			let errorCounter = 0;
-			let failureCounter = 0;
-			let executionCounter = 0;
+			let _errorCounter = 0;
+			let _executionCounter = 0;
+
 			let attemptCounter = 0;
+			let successCounter = 0;
+			let failureCounter = 0;
+			let doneCounter = 0;
 
 			const jobs = await _createJobs(db, async (j: Job) => {
-				executionCounter++;
+				_executionCounter++;
 				await sleep(20);
 				// simulate error on first 2 attempts
 				if (j.attempts <= 2) {
-					errorCounter++;
+					_errorCounter++;
 					throw new Error("Boom");
 				}
 				return { hey: "ho" };
 			});
 
 			//
+			jobs.onAttempt("foo", (_job: Job) => attemptCounter++);
 			jobs.onSuccess("foo", (_job: Job) => successCounter++);
 			jobs.onFailure("foo", (_job: Job) => failureCounter++);
-			jobs.onAttempt("foo", (_job: Job) => attemptCounter++);
+			jobs.onDone("foo", (_job: Job) => doneCounter++);
 
 			//
 			const { uid } = await jobs.create(
@@ -178,11 +181,12 @@ testsRunner([
 			// sleep a while... (we need 3 process cycles)
 			await sleep(500);
 
+			assertEquals(_errorCounter, 2);
+			assertEquals(_executionCounter, 3);
 			assertEquals(successCounter, 1);
-			assertEquals(errorCounter, 2);
-			assertEquals(executionCounter, 3);
-			assertEquals(failureCounter, 0);
 			assertEquals(attemptCounter, 3);
+			assertEquals(failureCounter, 0);
+			assertEquals(doneCounter, successCounter + failureCounter);
 
 			// we must see 3 logged executions system messages
 			let _loggerExecCounter = 0;
@@ -215,21 +219,23 @@ testsRunner([
 	{
 		name: "failed attempt",
 		async fn({ db }) {
+			let _errorCounter = 0;
+			let _executionCounter = 0;
 			let successCounter = 0;
-			let errorCounter = 0;
 			let failureCounter = 0;
-			let executionCounter = 0;
+			let doneCounter = 0;
 
 			const jobs = await _createJobs(db, async (_j: Job) => {
-				executionCounter++;
+				_executionCounter++;
 				await sleep(20);
-				errorCounter++; // always fail
+				_errorCounter++; // always fail
 				throw new Error("Boom");
 			});
 
 			//
 			jobs.onSuccess("foo", (_job: Job) => successCounter++);
 			jobs.onFailure("foo", (_job: Job) => failureCounter++);
+			jobs.onDone("foo", (_job: Job) => doneCounter++);
 
 			//
 			const { uid } = await jobs.create(
@@ -244,9 +250,10 @@ testsRunner([
 			await sleep(500);
 
 			assertEquals(successCounter, 0);
-			assertEquals(errorCounter, 5);
-			assertEquals(executionCounter, 5);
+			assertEquals(_errorCounter, 5);
+			assertEquals(_executionCounter, 5);
 			assertEquals(failureCounter, 1);
+			assertEquals(doneCounter, successCounter + failureCounter);
 
 			const { attempts } = await jobs.find(uid, true);
 			assertEquals(attempts!.length, 5);
@@ -300,7 +307,7 @@ testsRunner([
 			jobs.setHandler("foo", null);
 
 			j = await createFoo();
-			await sleep(300);
+			await sleep(200);
 
 			r = await jobs.find(j.uid);
 
@@ -310,6 +317,52 @@ testsRunner([
 			// teardown
 			await jobs.stop();
 			jobs.unsubscribeAll();
+		},
+		// only: true,
+	},
+	{
+		name: "create with onDone callback",
+		async fn({ db }) {
+			const jobs = await _createJobs(db);
+			let completedCounter = 0;
+			let failedCounter = 0;
+
+			const onDone = (j: Job) => {
+				if (j.status === JOB_STATUS.FAILED) failedCounter++;
+				else completedCounter++;
+			};
+
+			// create handler which will throw if payload say so...
+			jobs.setHandler("foo", (j: Job) => {
+				if (j.payload.doThrow) throw new Error("Boom");
+			});
+
+			const createFoo = (doThrow: boolean) =>
+				jobs.create(
+					"foo",
+					{ doThrow },
+					{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 },
+					onDone
+				);
+
+			// create throws
+			await createFoo(true); // failed
+			await createFoo(true); // failed
+			await createFoo(false); // completed
+
+			// console.log(jobs.__debugDump());
+			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 3);
+
+			await jobs.start(1);
+
+			await sleep(100);
+
+			// teardown
+			await jobs.stop();
+			jobs.unsubscribeAll();
+
+			assertEquals(failedCounter, 2);
+			assertEquals(completedCounter, 1);
 		},
 		// only: true,
 	},

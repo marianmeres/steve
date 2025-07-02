@@ -8,7 +8,7 @@ export interface Logger {
 }
 
 /** Creates a conventional log output console-wrap */
-export function createLogger(service: string, json = false) {
+export function createLogger(service: string, jsonOutput = false) {
 	const CONSOLE_TO_LEVEL = {
 		debug: "DEBUG",
 		log: "INFO",
@@ -21,7 +21,7 @@ export function createLogger(service: string, json = false) {
 		const rest = args.slice(1);
 		const timestamp = new Date().toISOString();
 
-		if (json) {
+		if (jsonOutput) {
 			console[level](
 				JSON.stringify({
 					timestamp,
@@ -36,8 +36,7 @@ export function createLogger(service: string, json = false) {
 			);
 		} else {
 			console[level](
-				`[${timestamp}] [${CONSOLE_TO_LEVEL[level]}] [${service}]`,
-				message,
+				`[${timestamp}] [${CONSOLE_TO_LEVEL[level]}] [${service}] ${message}`,
 				...rest
 			);
 		}

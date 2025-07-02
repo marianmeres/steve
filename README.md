@@ -61,25 +61,35 @@ const job = await jobs.create(
     {
         max_attempts: 3, // maximum number of retry attempts before giving up
         backoff_strategy: 'none' // or 'exp' (exp. backoff with 2^attempts seconds), 
-    } // optional
+    }, // optional options
+    // optional "onDone" callback for this particular job
+    function onDone(j: Job) {
+        // "j" is either completed or failed... see `j.status`
+    }
 );
 ```
 
-## Listening to success and/or failure
+## Listening to job states
+
+All `onXYZ` methods below return `unsubscribe` function.
 
 ```typescript
+jobs.onDone('my_job_type', (job: Job) => {
+    // job is either completed or failed... see `job.status`
+});
+
 jobs.onFailure('my_important_job_type', (failed: Job) => {
-    // this is triggered once max_attempts are reached (not on retry-able error)
+    // job failed (max_attempts retries were reached)
 });
 
 jobs.onSuccess('my_job_type', (job: Job) => {
-    console.log(job.result);
+    // job is completed successfully
 });
 
 // also, every attempt can be listened to as well
 jobs.onAttempt('my_job_type', (job: Job) => {
-    console.log('maybe success, maybe failure, maybe planned retry', job.status);
-})
+    // maybe completed, maybe failed, maybe pending (planned retry)... see `job.status`
+});
 ```
 
 ## Examining the job manually
