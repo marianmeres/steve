@@ -83,7 +83,7 @@ jobs.onFailure('my_important_job_type', (failed: Job) => {
 });
 
 jobs.onSuccess('my_job_type', (job: Job) => {
-    // job is completed successfully
+    // job has completed successfully
 });
 
 // also, every attempt can be listened to as well
