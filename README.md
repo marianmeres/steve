@@ -101,7 +101,7 @@ jobs.find(
 ): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
 ```
 
-## Listing all
+## Listing all jobs
 
 ```typescript
 jobs.fetchAll(
