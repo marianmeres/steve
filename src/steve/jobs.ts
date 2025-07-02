@@ -408,7 +408,13 @@ export class Jobs {
 	}
 
 	/** For internal debugging */
-	__debugDump() {
+	__debugDump(): {
+		pubsubSuccess: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
+		pubsubFailure: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
+		pubsubAttempt: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
+		pubsubDone: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
+		onDoneCallbacks: Record<string, JobAwareFn>;
+	} {
 		return {
 			pubsubSuccess: this.#pubsubSuccess.__dump(),
 			pubsubFailure: this.#pubsubFailure.__dump(),
