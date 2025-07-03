@@ -75,8 +75,8 @@ const job = await jobs.create(
     {
         // maximum number of retry attempts before giving up
         max_attempts: 3, 
-        // or 'exp' (exp. backoff with 2^attempts seconds), 
-        backoff_strategy: 'none' 
+        // 'exp' -> exp. backoff with 2^attempts seconds
+        backoff_strategy: 'exp' // or 'none' 
         // timestamp to schedule job run/start in the future
         run_at: Date
     }, // optional options
