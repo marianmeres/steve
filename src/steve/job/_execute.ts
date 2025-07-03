@@ -7,6 +7,7 @@ import {
 import { _handleJobSuccess } from "./_handle-success.ts";
 import { _handleJobFailure } from "./_handle-failure.ts";
 import { _logAttemptStart } from "./_log-attempt.ts";
+import { withTimeout } from "../utils/with-timeout.ts";
 
 export async function _executeJob(
 	context: JobContext,
@@ -16,7 +17,19 @@ export async function _executeJob(
 	const attemptId = await _logAttemptStart(context, job);
 
 	try {
-		const result = await handler(job);
+		let __handler = () => handler(job);
+
+		// are we on the clock? (zero means no max limit)
+		if (job.max_attempt_duration_ms > 0) {
+			__handler = withTimeout(
+				__handler,
+				job.max_attempt_duration_ms,
+				"Execution timed out"
+			);
+		}
+
+		const result = await __handler();
+
 		const completedJob = await _handleJobSuccess(
 			context,
 			job.id,

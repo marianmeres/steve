@@ -3,7 +3,8 @@
 PostgreSQL based jobs processing manager. 
 
 Supports atomic concurrency, multiple "workers" (job processors), job scheduling, 
-configurable retry logic, configurable backoff strategies, detailed logging and more...
+configurable retry logic, configurable max allowed duration per attempt, configurable backoff 
+strategies, detailed logging and more...
 
 Uses [node-postgres](https://node-postgres.com/) internally.
 
@@ -75,6 +76,8 @@ const job = await jobs.create(
     {
         // maximum number of retry attempts before giving up
         max_attempts: 3, 
+        // maximum allowed attempt duration before timing out (zero means no limit)
+        max_attempt_duration_ms: 0,
         // 'exp' -> exp. backoff with 2^attempts seconds
         backoff_strategy: 'exp' // or 'none' 
         // timestamp to schedule job run/start in the future

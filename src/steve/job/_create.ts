@@ -16,6 +16,7 @@ export async function _create(
 		payload: true,
 		max_attempts: true,
 		backoff_strategy: true,
+		max_attempt_duration_ms: true,
 		run_at: (v: any) => (v ? new Date(v).toISOString() : null),
 	});
 

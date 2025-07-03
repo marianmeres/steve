@@ -401,4 +401,43 @@ testsRunner([
 		},
 		// only: true,
 	},
+	{
+		name: "max allowed attempt duration",
+		async fn({ db }) {
+			const ref = { id: -1 };
+			const jobs = await _createJobs(db, async (_j: Job) => {
+				await sleep(500, ref); // should always time out
+			});
+
+			const job = await jobs.create(
+				"foo",
+				{ bar: "baz" },
+				{
+					backoff_strategy: BACKOFF_STRATEGY.NONE,
+					max_attempts: 2,
+					max_attempt_duration_ms: 150,
+				}
+			);
+
+			await jobs.start(1);
+
+			// sleep a while... (we need 3 process cycles)
+			await sleep(600);
+
+			// teardown
+			await jobs.stop();
+			jobs.unsubscribeAll();
+
+			const r = await jobs.find(job.uid, true);
+			// console.log(r);
+
+			assertEquals(r.job.status, JOB_STATUS.FAILED);
+			assertEquals(r.attempts?.length, 2);
+			assertEquals(r.attempts?.[0].error_message, "Execution timed out");
+			assertEquals(r.attempts?.[1].error_message, "Execution timed out");
+
+			clearTimeout(ref.id);
+		},
+		// only: true,
+	},
 ]);

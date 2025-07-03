@@ -19,6 +19,7 @@ import {
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 import { createLogger, type Logger } from "./utils/logger.ts";
+import { withTimeout } from "./utils/with-timeout.ts";
 
 /** Job statuses */
 export const JOB_STATUS = {
@@ -77,6 +78,7 @@ export interface Job {
 		| typeof JOB_STATUS.FAILED;
 	attempts: number;
 	max_attempts: number;
+	max_attempt_duration_ms: number;
 	created_at: Date;
 	updated_at: Date;
 	started_at: Date;
@@ -102,6 +104,7 @@ export interface JobCreateDTO {
 	type: string;
 	payload: Record<string, any>;
 	max_attempts?: number;
+	max_attempt_duration_ms?: number;
 	backoff_strategy?: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
 	/** Optional timestamp to schedule the job run in the future */
 	run_at?: Date;
@@ -282,6 +285,7 @@ export class Jobs {
 		payload: Record<string, any> = {},
 		options: Partial<{
 			max_attempts: JobCreateDTO["max_attempts"];
+			max_attempt_duration_ms: JobCreateDTO["max_attempt_duration_ms"];
 			backoff_strategy: JobCreateDTO["backoff_strategy"];
 			run_at: JobCreateDTO["run_at"];
 		}> = {},
@@ -290,6 +294,7 @@ export class Jobs {
 		const {
 			max_attempts = 3,
 			backoff_strategy = BACKOFF_STRATEGY.EXP,
+			max_attempt_duration_ms = 0,
 			run_at,
 		} = options || {};
 
@@ -303,6 +308,7 @@ export class Jobs {
 				max_attempts,
 				backoff_strategy,
 				run_at,
+				max_attempt_duration_ms,
 			},
 			onDone
 		);

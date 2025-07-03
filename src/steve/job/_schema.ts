@@ -28,6 +28,7 @@ export function _schemaCreate(context: Pick<JobContext, "tableNames">): string {
 			result          	JSONB NOT NULL DEFAULT '{}',
 			attempts        	INTEGER DEFAULT 0,
 			max_attempts    	INTEGER DEFAULT 3,
+			max_attempt_duration_ms INTEGER DEFAULT 0,
 			created_at      	TIMESTAMPTZ DEFAULT NOW(),
 			updated_at      	TIMESTAMPTZ DEFAULT NOW(),
 			run_at          	TIMESTAMPTZ DEFAULT NOW(),
