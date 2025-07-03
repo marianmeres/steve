@@ -12,10 +12,10 @@ export async function _create(
 	const { tableJobs } = tableNames;
 
 	const { keys, values, placeholders } = dataToSqlParams(data, {
-		type: true as const,
-		payload: true as const,
-		max_attempts: true as const,
-		backoff_strategy: true as const,
+		type: true,
+		payload: true,
+		max_attempts: true,
+		backoff_strategy: true,
 		run_at: (v: any) => (v ? new Date(v).toISOString() : null),
 	});
 

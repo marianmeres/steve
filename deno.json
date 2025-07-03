@@ -9,7 +9,7 @@
 		"example": "deno run -A --env-file example/server.ts"
 	},
 	"imports": {
-		"@marianmeres/data-to-sql-params": "npm:@marianmeres/data-to-sql-params@^1.1.1",
+		"@marianmeres/data-to-sql-params": "npm:@marianmeres/data-to-sql-params@^1.2.0",
 		"@marianmeres/demino": "jsr:@marianmeres/demino@^1.0.51",
 		"@marianmeres/parse-boolean": "npm:@marianmeres/parse-boolean@^1.1.7",
 		"@marianmeres/pubsub": "jsr:@marianmeres/pubsub@^2.1.1",
