@@ -10,12 +10,12 @@ export class TimeoutError extends Error {}
 export function withTimeout<T>(
 	fn: CallableFunction,
 	timeout: number = 1_000,
-	errMessage?: string,
+	errMessage?: string
 ): (...args: any[]) => Promise<T> {
 	return (...args: any[]) => {
 		const _promise = fn(...args);
 
-		let _timeoutId: number;
+		let _timeoutId: any;
 		const _clock = new Promise((_, reject) => {
 			_timeoutId = setTimeout(() => {
 				reject(new TimeoutError(errMessage || `Timed out after ${timeout} ms`));
