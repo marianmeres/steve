@@ -73,8 +73,12 @@ const job = await jobs.create(
     'my_job_type', // required
     { foo: 'bar' }, // optional payload
     {
-        max_attempts: 3, // maximum number of retry attempts before giving up
-        backoff_strategy: 'none' // or 'exp' (exp. backoff with 2^attempts seconds), 
+        // maximum number of retry attempts before giving up
+        max_attempts: 3, 
+        // or 'exp' (exp. backoff with 2^attempts seconds), 
+        backoff_strategy: 'none' 
+        // timestamp to schedule job run/start in the future
+        run_at: Date
     }, // optional options
     // optional "onDone" callback for this particular job
     function onDone(job: Job) {
