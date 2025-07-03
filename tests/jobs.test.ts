@@ -361,7 +361,6 @@ testsRunner([
 
 			const jobs = await _createJobs(db);
 
-			console.log(new Date().toISOString());
 			let job = await jobs.create(
 				"foo",
 				{},

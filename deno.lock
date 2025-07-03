@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@marianmeres/data-to-sql-params@^1.4.0": "1.4.0",
     "jsr:@marianmeres/demino@^1.0.51": "1.0.51",
     "jsr:@marianmeres/midware@^1.1.0": "1.1.0",
     "jsr:@marianmeres/pubsub@^2.1.1": "2.1.1",
@@ -21,7 +22,6 @@
     "jsr:@std/path@^1.1.0": "1.1.1",
     "jsr:@std/path@^1.1.1": "1.1.1",
     "jsr:@std/streams@^1.0.10": "1.0.10",
-    "npm:@marianmeres/data-to-sql-params@^1.3.1": "1.3.1",
     "npm:@marianmeres/http-utils@^1.21.0": "1.21.0",
     "npm:@marianmeres/parse-boolean@^1.1.7": "1.1.7",
     "npm:@marianmeres/simple-router@^2.1.0": "2.1.0",
@@ -30,6 +30,9 @@
     "npm:request-ip@3": "3.3.0"
   },
   "jsr": {
+    "@marianmeres/data-to-sql-params@1.4.0": {
+      "integrity": "b0c63f2f7f914be32e1c5590974f25ac91bed61c81dce95df2df6090031a11fc"
+    },
     "@marianmeres/demino@1.0.51": {
       "integrity": "4b75c6b0bd53163fb2b2f22f7ec8abc21bfc66885d79ddece6bbbe24b545168c",
       "dependencies": [
@@ -134,9 +137,6 @@
     }
   },
   "npm": {
-    "@marianmeres/data-to-sql-params@1.3.1": {
-      "integrity": "sha512-8imFqPUc8ZKBjaqVKuTUoABfvmPNrOzxjOKZYVvTjD2OK3MZr2XSWnD3UzLwAFu+2HQWA77v2wcSeuBZPMdCZA=="
-    },
     "@marianmeres/http-utils@1.21.0": {
       "integrity": "sha512-Vy1XARRimLmM4j654LBnHcAqKFDfkClrKYhPouL8UrO58eCble0fJ19PjWDVLB+lq68mqzeZGTMbq5WN7DAPog==",
       "dependencies": [
@@ -238,12 +238,12 @@
   },
   "workspace": {
     "dependencies": [
+      "jsr:@marianmeres/data-to-sql-params@^1.4.0",
       "jsr:@marianmeres/demino@^1.0.51",
       "jsr:@marianmeres/pubsub@^2.1.1",
       "jsr:@std/assert@1",
       "jsr:@std/fs@^1.0.19",
       "jsr:@std/path@^1.1.1",
-      "npm:@marianmeres/data-to-sql-params@^1.3.1",
       "npm:@marianmeres/parse-boolean@^1.1.7",
       "npm:pg@^8.16.3"
     ]
