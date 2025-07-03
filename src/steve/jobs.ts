@@ -103,6 +103,8 @@ export interface JobCreateDTO {
 	payload: Record<string, any>;
 	max_attempts?: number;
 	backoff_strategy?: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
+	/** Optional timestamp to schedule the job run in the future */
+	run_at?: Date;
 }
 
 /** Factory options */
@@ -281,11 +283,15 @@ export class Jobs {
 		options: Partial<{
 			max_attempts: JobCreateDTO["max_attempts"];
 			backoff_strategy: JobCreateDTO["backoff_strategy"];
+			run_at: JobCreateDTO["run_at"];
 		}> = {},
 		onDone?: JobAwareFn
 	): Promise<Job> {
-		const { max_attempts = 3, backoff_strategy = BACKOFF_STRATEGY.EXP } =
-			options || {};
+		const {
+			max_attempts = 3,
+			backoff_strategy = BACKOFF_STRATEGY.EXP,
+			run_at,
+		} = options || {};
 
 		await this.#initializeOnce();
 
@@ -296,6 +302,7 @@ export class Jobs {
 				payload,
 				max_attempts,
 				backoff_strategy,
+				run_at,
 			},
 			onDone
 		);

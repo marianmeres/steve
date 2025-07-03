@@ -354,4 +354,52 @@ testsRunner([
 		},
 		// only: true,
 	},
+	{
+		name: "schedule job run in the future",
+		async fn({ db }) {
+			let jobDone = false;
+
+			const jobs = await _createJobs(db);
+
+			console.log(new Date().toISOString());
+			let job = await jobs.create(
+				"foo",
+				{},
+				// schedule 200 ms in the future
+				{ run_at: new Date(Date.now() + 200) },
+				() => (jobDone = true)
+			);
+			// console.log(job);
+
+			await jobs.start(1);
+
+			// must NOT be done yet
+			assert(!jobDone);
+
+			await sleep(100);
+
+			// still must NOT be done yet
+			assert(!jobDone);
+
+			await sleep(250);
+
+			// now MUST be done finally
+			assert(jobDone);
+
+			job = (await jobs.find(job.uid)).job;
+			// console.log(job);
+
+			// start and run time must differ for at least 200 ms
+			assert(
+				new Date(job.started_at).valueOf() -
+					new Date(job.created_at).valueOf() >
+					200
+			);
+
+			// teardown
+			await jobs.stop();
+			jobs.unsubscribeAll();
+		},
+		// only: true,
+	},
 ]);

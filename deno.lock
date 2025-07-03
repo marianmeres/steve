@@ -21,6 +21,7 @@
     "jsr:@std/path@^1.1.0": "1.1.1",
     "jsr:@std/path@^1.1.1": "1.1.1",
     "jsr:@std/streams@^1.0.10": "1.0.10",
+    "npm:@marianmeres/data-to-sql-params@^1.1.1": "1.1.1",
     "npm:@marianmeres/http-utils@^1.21.0": "1.21.0",
     "npm:@marianmeres/parse-boolean@^1.1.7": "1.1.7",
     "npm:@marianmeres/simple-router@^2.1.0": "2.1.0",
@@ -133,6 +134,9 @@
     }
   },
   "npm": {
+    "@marianmeres/data-to-sql-params@1.1.1": {
+      "integrity": "sha512-9JLXXPwNtNp+FzmZIHnnpj8319Be+qx4/I2A9sOSUaAH+RqtsuruhzawV3F1v2TakyfvuiCkMga5brSj1tf9dQ=="
+    },
     "@marianmeres/http-utils@1.21.0": {
       "integrity": "sha512-Vy1XARRimLmM4j654LBnHcAqKFDfkClrKYhPouL8UrO58eCble0fJ19PjWDVLB+lq68mqzeZGTMbq5WN7DAPog==",
       "dependencies": [
@@ -239,6 +243,7 @@
       "jsr:@std/assert@1",
       "jsr:@std/fs@^1.0.19",
       "jsr:@std/path@^1.1.1",
+      "npm:@marianmeres/data-to-sql-params@^1.1.1",
       "npm:@marianmeres/parse-boolean@^1.1.7",
       "npm:pg@^8.16.3"
     ]

@@ -2,8 +2,8 @@
 
 PostgreSQL based jobs processing manager. 
 
-Supports atomic concurrency, multiple "workers" (job processors), configurable 
-retry logic, backoff, detailed logging and more...
+Supports atomic concurrency, multiple "workers" (job processors), job scheduling, 
+configurable retry logic, configurable backoff strategies, detailed logging and more...
 
 Uses [node-postgres](https://node-postgres.com/) internally.
 
@@ -53,7 +53,7 @@ const jobs = new Jobs({
     pollIntervalMs, // default 1_000
 });
 
-// later, as new job types are needed, just re/set handler
+// later, as new job types are needed, just re/set the handler
 jobs.setHandler('my_type', myHandler);
 jobs.setHandler('my_type', null); // this removes the `my_type` handler altogether
 
