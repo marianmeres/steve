@@ -10,6 +10,11 @@ export async function _healthPreview(
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
+	sinceMinutesAgo = parseInt(`${sinceMinutesAgo}`);
+	if (Number.isNaN(sinceMinutesAgo)) {
+		sinceMinutesAgo = 60;
+	}
+
 	const { rows } = await db.query(
 		`SELECT 
 			status, 

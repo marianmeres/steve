@@ -25,7 +25,6 @@ export async function _executeJob(
 		); // TX
 
 		context.pubsubAttempt.publish(job.type, completedJob);
-		context.pubsubSuccess.publish(job.type, completedJob);
 		_execOnDone(context, completedJob);
 	} catch (error) {
 		const failedJob = await _handleJobFailure(context, job, attemptId, error); // TX
@@ -34,7 +33,6 @@ export async function _executeJob(
 
 		// also, true failure
 		if (failedJob?.status === JOB_STATUS.FAILED) {
-			context.pubsubFailure.publish(job.type, failedJob);
 			_execOnDone(context, failedJob);
 		}
 	}
@@ -44,7 +42,9 @@ export async function _executeJob(
 function _execOnDone(context: JobContext, job: Job) {
 	context.pubsubDone.publish(job.type, job);
 
-	//
+	// call the callback (if exists)
 	context.onDoneCallbacks.get(job.uid)?.(job);
+
+	// cleanup
 	context.onDoneCallbacks.delete(job.uid);
 }

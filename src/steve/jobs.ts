@@ -58,8 +58,6 @@ export interface JobContext {
 		tableAttempts: string;
 	};
 	logger: Logger;
-	pubsubSuccess: ReturnType<typeof createPubSub>;
-	pubsubFailure: ReturnType<typeof createPubSub>;
 	pubsubAttempt: ReturnType<typeof createPubSub>;
 	pubsubDone: ReturnType<typeof createPubSub>;
 	onDoneCallbacks: Map<string, JobAwareFn>;
@@ -143,8 +141,6 @@ export class Jobs {
 	#jobHandlers: JobHandlersMap;
 	#logger: Logger;
 	#onDoneCallbacks: Map<string, JobAwareFn> = new Map();
-	#pubsubSuccess: ReturnType<typeof createPubSub> = createPubSub();
-	#pubsubFailure: ReturnType<typeof createPubSub> = createPubSub();
 	#pubsubAttempt: ReturnType<typeof createPubSub> = createPubSub();
 	#pubsubDone: ReturnType<typeof createPubSub> = createPubSub();
 	#context: JobContext;
@@ -177,10 +173,8 @@ export class Jobs {
 			db: this.#db,
 			tableNames: tableNames(tablePrefix),
 			logger: this.#logger,
-			pubsubSuccess: this.#pubsubSuccess,
-			pubsubFailure: this.#pubsubFailure,
-			pubsubAttempt: this.#pubsubAttempt,
 			pubsubDone: this.#pubsubDone,
+			pubsubAttempt: this.#pubsubAttempt,
 			onDoneCallbacks: this.#onDoneCallbacks,
 		};
 	}
@@ -245,7 +239,11 @@ export class Jobs {
 
 	/** Will (un)set handler for given type*/
 	setHandler(type: string, handler: JobHandler | undefined | null): Jobs {
-		this.#jobHandlers[type] = handler;
+		if (typeof handler === "function") {
+			this.#jobHandlers[type] = handler;
+		} else {
+			delete this.#jobHandlers[type];
+		}
 		return this;
 	}
 
@@ -368,20 +366,6 @@ export class Jobs {
 		return this.#onEvent(this.#pubsubDone, type, cb);
 	}
 
-	/** Subscribe callback to a completed job type(s) */
-	onSuccess(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.#pubsubSuccess, type, cb);
-	}
-
-	/**
-	 * Subscribe callback to a failed job type(s). Intentionally not calling this "onError",
-	 * because "errors" are handled and retried... this callback is only triggered
-	 * where all retries failed.
-	 */
-	onFailure(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.#pubsubFailure, type, cb);
-	}
-
 	/** Subscribe callback to every attempt */
 	onAttempt(type: string | string[], cb: (job: Job) => void): Unsubscriber {
 		return this.#onEvent(this.#pubsubAttempt, type, cb);
@@ -401,23 +385,17 @@ export class Jobs {
 
 	/** Helper to unsub all listeners. Used in tests. */
 	unsubscribeAll(): void {
-		this.#pubsubSuccess.unsubscribeAll();
-		this.#pubsubFailure.unsubscribeAll();
 		this.#pubsubAttempt.unsubscribeAll();
 		this.#pubsubDone.unsubscribeAll();
 	}
 
 	/** For internal debugging */
 	__debugDump(): {
-		pubsubSuccess: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
-		pubsubFailure: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
 		pubsubAttempt: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
 		pubsubDone: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
 		onDoneCallbacks: Record<string, JobAwareFn>;
 	} {
 		return {
-			pubsubSuccess: this.#pubsubSuccess.__dump(),
-			pubsubFailure: this.#pubsubFailure.__dump(),
 			pubsubAttempt: this.#pubsubAttempt.__dump(),
 			pubsubDone: this.#pubsubDone.__dump(),
 			onDoneCallbacks: Object.fromEntries(this.#onDoneCallbacks.entries()),

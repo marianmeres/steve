@@ -148,8 +148,6 @@ testsRunner([
 			let _executionCounter = 0;
 
 			let attemptCounter = 0;
-			let successCounter = 0;
-			let failureCounter = 0;
 			let doneCounter = 0;
 
 			const jobs = await _createJobs(db, async (j: Job) => {
@@ -165,8 +163,6 @@ testsRunner([
 
 			//
 			jobs.onAttempt("foo", (_job: Job) => attemptCounter++);
-			jobs.onSuccess("foo", (_job: Job) => successCounter++);
-			jobs.onFailure("foo", (_job: Job) => failureCounter++);
 			jobs.onDone("foo", (_job: Job) => doneCounter++);
 
 			//
@@ -183,10 +179,8 @@ testsRunner([
 
 			assertEquals(_errorCounter, 2);
 			assertEquals(_executionCounter, 3);
-			assertEquals(successCounter, 1);
 			assertEquals(attemptCounter, 3);
-			assertEquals(failureCounter, 0);
-			assertEquals(doneCounter, successCounter + failureCounter);
+			assertEquals(doneCounter, 1);
 
 			// we must see 3 logged executions system messages
 			let _loggerExecCounter = 0;
@@ -221,8 +215,6 @@ testsRunner([
 		async fn({ db }) {
 			let _errorCounter = 0;
 			let _executionCounter = 0;
-			let successCounter = 0;
-			let failureCounter = 0;
 			let doneCounter = 0;
 
 			const jobs = await _createJobs(db, async (_j: Job) => {
@@ -233,8 +225,6 @@ testsRunner([
 			});
 
 			//
-			jobs.onSuccess("foo", (_job: Job) => successCounter++);
-			jobs.onFailure("foo", (_job: Job) => failureCounter++);
 			jobs.onDone("foo", (_job: Job) => doneCounter++);
 
 			//
@@ -249,11 +239,9 @@ testsRunner([
 			// sleep a while... (we need 3 process cycles)
 			await sleep(500);
 
-			assertEquals(successCounter, 0);
 			assertEquals(_errorCounter, 5);
 			assertEquals(_executionCounter, 5);
-			assertEquals(failureCounter, 1);
-			assertEquals(doneCounter, successCounter + failureCounter);
+			assertEquals(doneCounter, 1);
 
 			const { attempts } = await jobs.find(uid, true);
 			assertEquals(attempts!.length, 5);

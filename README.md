@@ -19,21 +19,34 @@ npm i @marianmeres/steve
 
 ## Basic Usage
 
+### Job handlers
+
+Job handling function(s) can be specified via constructor options either as a single
+`jobHandler` function or as a `jobHandlers` functions map by type. Both options 
+`jobHandlers` and `jobHandler` can be used together, where the `jobHandlers` map will 
+have priority and `jobHandler` will act as a fallback.
+
+If none of the `jobHandlers` or `jobHandler` options is specified, the system will still be
+normally functional all incoming jobs will be handled with the internal `noop` handler.
+
+### Example
+
 ```typescript
 import { Jobs } from "@marianmeres/steve";
 
 // the manager instance
 const jobs = new Jobs({
-    db, // pg.Pool or pg.Client 
-    jobHandler(job: Job) {
+    // pg.Pool or pg.Client 
+    db, 
+    // global job handler for all jobs
+    jobHandler: (job: Job) => {
         // Do the work... 
-        // May dispatch the work to another handlers based on the `job.type`.
         // Must throw on error.
         // Returned data will be available as the `result` prop.
     },
-    // or, alternatively specify a jobHandlers by type
+    // or, jobHandlers by type map
     jobHandlers: {
-        my_job_type: myJobHandler,
+        my_job_type: (job: Job) => { /*...*/ },
         // ...
     },
     // how long should the worker be idle before trying to claim a new job
@@ -42,6 +55,7 @@ const jobs = new Jobs({
 
 // later, as new job types are needed, just re/set handler
 jobs.setHandler('my_type', myHandler);
+jobs.setHandler('my_type', null); // this removes the `my_type` handler altogether
 
 // kicks off the job processing (with, let's say, 2 concurrent processors)
 jobs.start(2);
@@ -63,30 +77,23 @@ const job = await jobs.create(
         backoff_strategy: 'none' // or 'exp' (exp. backoff with 2^attempts seconds), 
     }, // optional options
     // optional "onDone" callback for this particular job
-    function onDone(j: Job) {
-        // "j" is either completed or failed... see `j.status`
+    function onDone(job: Job) {
+        // job is either completed or failed... see `job.status`
     }
 );
 ```
 
-## Listening to job states
+## Listening to job events
 
 All `onXYZ` methods below return `unsubscribe` function.
 
 ```typescript
 jobs.onDone('my_job_type', (job: Job) => {
     // job is either completed or failed... see `job.status`
+    // note that status `failed` is only set once 
+    // max_attempts retries were reached
 });
 
-jobs.onFailure('my_important_job_type', (failed: Job) => {
-    // job failed (max_attempts retries were reached)
-});
-
-jobs.onSuccess('my_job_type', (job: Job) => {
-    // job has completed successfully
-});
-
-// also, every attempt can be listened to as well
 jobs.onAttempt('my_job_type', (job: Job) => {
     // maybe completed, maybe failed, maybe pending (planned retry)... see `job.status`
 });
