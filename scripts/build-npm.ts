@@ -83,8 +83,9 @@ const packageJson = {
 		url: "https://github.com/marianmeres/steve/issues",
 	},
 	dependencies: {
+		"@marianmeres/data-to-sql-params": "^1.1.1",
 		"@marianmeres/parse-boolean": "^1.1.7",
-		"@marianmeres/pubsub": "^2.0.0",
+		"@marianmeres/pubsub": "^2.1.0",
 		"@types/node": "latest",
 		"@types/pg": "latest"
 	}
