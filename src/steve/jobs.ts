@@ -299,7 +299,7 @@ export class Jobs {
 
 		await this.#initializeOnce();
 
-		return _create(
+		return await _create(
 			this.#context,
 			{
 				type,
@@ -358,19 +358,19 @@ export class Jobs {
 	async cleanup(): Promise<void> {
 		// this does not make much sense to initialize on cleanup... but keeping the convention
 		await this.#initializeOnce();
-		return _markExpired(this.#context);
+		return await _markExpired(this.#context);
 		// todo: hard delete old?
 	}
 
 	/** Will collect some stats... */
 	async healthPreview(sinceMinutesAgo = 60): Promise<any[]> {
 		await this.#initializeOnce();
-		return _healthPreview(this.#context, sinceMinutesAgo);
+		return await _healthPreview(this.#context, sinceMinutesAgo);
 	}
 
 	/** Will remove related tables. */
-	uninstall(): Promise<void> {
-		return _uninstall(this.#context);
+	async uninstall(): Promise<void> {
+		return await _uninstall(this.#context);
 	}
 
 	/** Subscribe callback to processed (done) job, which is either success or failure */
