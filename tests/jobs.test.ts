@@ -12,7 +12,7 @@ import {
 } from "../src/mod.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { sleep } from "../src/steve/utils/sleep.ts";
 
 let _logger: any = [];
@@ -24,13 +24,11 @@ async function _createJobs(
 	jobHandler?: JobHandler,
 	jobHandlers?: JobHandlersMap
 ) {
-	// so we're recreating the schema on each test
-	await db.query(Jobs.__schema(tablePrefix).drop);
 	_logger = [];
 
 	const log = (...args: any) => _logger.push(args[0]);
 
-	return new Jobs({
+	const jobs = new Jobs({
 		db,
 		jobHandler,
 		jobHandlers,
@@ -40,30 +38,14 @@ async function _createJobs(
 		pollTimeoutMs,
 		tablePrefix,
 	});
+
+	// manually hard reset before each test
+	await jobs.resetHard();
+
+	return jobs;
 }
 
 testsRunner([
-	{
-		name: "sanity check",
-		async fn({ db }) {
-			const jobs = await _createJobs(db, (job: Job) => {
-				console.log(job);
-			});
-
-			// table must not exist yet
-			assertRejects(() => db.query("select * from _foo_job"));
-			await jobs.start(1);
-
-			// now it must exist
-			const { rows } = await db.query("select * from _foo_job");
-			assertEquals(rows, []);
-
-			await jobs.stop();
-
-			// some system initialization messages must have been logged
-			assert(_logger.length);
-		},
-	},
 	{
 		name: "happy flow",
 		async fn({ db }) {

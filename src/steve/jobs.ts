@@ -19,6 +19,8 @@ import {
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 import { createLogger, type Logger } from "./utils/logger.ts";
+import { runInThisContext } from "node:vm";
+import { throws } from "node:assert";
 
 /** Job statuses */
 export const JOB_STATUS = {
@@ -153,6 +155,7 @@ export class Jobs {
 	#wasInitialized = false;
 	#activeJobs = new Set();
 	#jobProcessors: Promise<void>[] = [];
+	#doHardInit = false;
 
 	constructor(options: JobsOptions) {
 		const {
@@ -183,11 +186,13 @@ export class Jobs {
 		};
 	}
 
-	async #initializeOnce() {
+	async #initializeOnce(hard?: boolean | undefined) {
 		if (!this.#wasInitialized) {
-			await _initialize(this.#context);
+			await _initialize(this.#context, !!hard);
 			this.#wasInitialized = true;
-			this.#logger?.debug?.(`System initialized`);
+			this.#logger?.debug?.(
+				`System initialized${this.#doHardInit ? " (hard)" : ""} `
+			);
 
 			if (this.gracefulSigterm) {
 				process.on("SIGTERM", async () => {
@@ -366,6 +371,12 @@ export class Jobs {
 	async healthPreview(sinceMinutesAgo = 60): Promise<any[]> {
 		await this.#initializeOnce();
 		return await _healthPreview(this.#context, sinceMinutesAgo);
+	}
+
+	/** Optional: manually initialize if needed. Use with caution as hard init will recreate
+	 * tables (you will loose data). Intended to be used in tests only. */
+	async resetHard() {
+		return await this.#initializeOnce(true);
 	}
 
 	/** Will remove related tables. */
