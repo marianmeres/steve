@@ -375,7 +375,7 @@ export class Jobs {
 
 	/** Optional: manually initialize if needed. Use with caution as hard init will recreate
 	 * tables (you will loose data). Intended to be used in tests only. */
-	async resetHard() {
+	async resetHard(): Promise<void> {
 		return await this.#initializeOnce(true);
 	}
 
