@@ -77,5 +77,7 @@ export async function _initialize(
 
 export async function _uninstall(context: JobContext): Promise<void> {
 	const { db } = context;
+	await db.query("BEGIN");
 	await db.query(_schemaDrop(context));
+	await db.query("COMMIT");
 }
