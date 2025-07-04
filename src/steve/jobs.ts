@@ -19,7 +19,6 @@ import {
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 import { createLogger, type Logger } from "./utils/logger.ts";
-import { withTimeout } from "./utils/with-timeout.ts";
 
 /** Job statuses */
 export const JOB_STATUS = {
@@ -351,7 +350,7 @@ export class Jobs {
 			}
 		}
 
-		return _fetchAll(this.#context, where, options);
+		return await _fetchAll(this.#context, where, options);
 	}
 
 	/** Will do some maintenance cleanups. It's up to the consumer to decide the
