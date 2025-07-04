@@ -100,15 +100,19 @@ export interface JobAttempt {
 	error_details: null | Record<"stack" | string, any>;
 }
 
-/** Supported userland values when creating new job */
-export interface JobCreateDTO {
-	type: string;
-	payload: Record<string, any>;
+/** Allowed options when creating a new job */
+export interface JobCreateOptions {
 	max_attempts?: number;
 	max_attempt_duration_ms?: number;
 	backoff_strategy?: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
 	/** Optional timestamp to schedule the job run in the future */
 	run_at?: Date;
+}
+
+/** Supported userland values when creating new job */
+export interface JobCreateDTO extends JobCreateOptions {
+	type: string;
+	payload: Record<string, any>;
 }
 
 /** Factory options */
@@ -287,12 +291,7 @@ export class Jobs {
 	async create(
 		type: string,
 		payload: Record<string, any> = {},
-		options: Partial<{
-			max_attempts: JobCreateDTO["max_attempts"];
-			max_attempt_duration_ms: JobCreateDTO["max_attempt_duration_ms"];
-			backoff_strategy: JobCreateDTO["backoff_strategy"];
-			run_at: JobCreateDTO["run_at"];
-		}> = {},
+		options?: JobCreateOptions,
 		onDone?: JobAwareFn
 	): Promise<Job> {
 		const {
