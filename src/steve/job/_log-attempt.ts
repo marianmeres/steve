@@ -64,7 +64,7 @@ export async function _logAttemptError(
 }
 
 /**  */
-export async function _logAttemptErrorFetchAll(
+export async function _logAttemptFetchAll(
 	context: JobContext,
 	jobId: number
 ): Promise<JobAttempt[]> {

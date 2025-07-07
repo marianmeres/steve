@@ -8,7 +8,7 @@ import { _create } from "./job/_create.ts";
 import { _executeJob } from "./job/_execute.ts";
 import { _fetchAll, _find } from "./job/_find.ts";
 import { _healthPreview } from "./job/_health-preview.ts";
-import { _logAttemptErrorFetchAll } from "./job/_log-attempt.ts";
+import { _logAttemptFetchAll } from "./job/_log-attempt.ts";
 import { _markExpired } from "./job/_mark-expired.ts";
 import {
 	_initialize,
@@ -16,11 +16,9 @@ import {
 	_schemaDrop,
 	_uninstall,
 } from "./job/_schema.ts";
+import { createLogger, type Logger } from "./utils/logger.ts";
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
-import { createLogger, type Logger } from "./utils/logger.ts";
-import { runInThisContext } from "node:vm";
-import { throws } from "node:assert";
 
 /** Job statuses */
 export const JOB_STATUS = {
@@ -327,7 +325,7 @@ export class Jobs {
 		let attempts: null | any[] = null;
 
 		if (job && withAttempts) {
-			attempts = await _logAttemptErrorFetchAll(this.#context, job.id);
+			attempts = await _logAttemptFetchAll(this.#context, job.id);
 		}
 
 		return { job, attempts };
