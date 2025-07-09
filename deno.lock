@@ -1,7 +1,7 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@marianmeres/clog@^2.3.0": "2.3.0",
+    "jsr:@marianmeres/clog@^2.3.1": "2.3.1",
     "jsr:@marianmeres/data-to-sql-params@^1.4.0": "1.4.0",
     "jsr:@marianmeres/demino@^1.0.51": "1.0.51",
     "jsr:@marianmeres/midware@^1.1.0": "1.1.0",
@@ -32,8 +32,8 @@
     "npm:request-ip@3": "3.3.0"
   },
   "jsr": {
-    "@marianmeres/clog@2.3.0": {
-      "integrity": "4c891bea394a40e41347f839ff9b9844083dc57ee87a5a23bea291eb62626a08"
+    "@marianmeres/clog@2.3.1": {
+      "integrity": "454c22545275ff9b7f108ce0fceeca01be5d3535cf385ff047941aba06ec991d"
     },
     "@marianmeres/data-to-sql-params@1.4.0": {
       "integrity": "b0c63f2f7f914be32e1c5590974f25ac91bed61c81dce95df2df6090031a11fc"
@@ -251,7 +251,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@marianmeres/clog@^2.3.0",
+      "jsr:@marianmeres/clog@^2.3.1",
       "jsr:@marianmeres/data-to-sql-params@^1.4.0",
       "jsr:@marianmeres/demino@^1.0.51",
       "jsr:@marianmeres/pubsub@^2.1.1",

@@ -9,7 +9,7 @@
 		"example": "deno run -A --env-file example/server.ts"
 	},
 	"imports": {
-		"@marianmeres/clog": "jsr:@marianmeres/clog@^2.3.0",
+		"@marianmeres/clog": "jsr:@marianmeres/clog@^2.3.1",
 		"@marianmeres/data-to-sql-params": "jsr:@marianmeres/data-to-sql-params@^1.4.0",
 		"@marianmeres/demino": "jsr:@marianmeres/demino@^1.0.51",
 		"@marianmeres/parse-boolean": "npm:@marianmeres/parse-boolean@^1.1.7",
