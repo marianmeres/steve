@@ -157,7 +157,6 @@ export class Jobs {
 	#wasInitialized = false;
 	#activeJobs = new Set();
 	#jobProcessors: Promise<void>[] = [];
-	#doHardInit = false;
 
 	constructor(options: JobsOptions) {
 		const {
@@ -192,9 +191,7 @@ export class Jobs {
 		if (!this.#wasInitialized) {
 			await _initialize(this.#context, !!hard);
 			this.#wasInitialized = true;
-			this.#logger?.debug?.(
-				`System initialized${this.#doHardInit ? " (hard)" : ""} `
-			);
+			this.#logger?.debug?.(`System initialized${hard ? " (hard)" : ""} `);
 
 			if (this.gracefulSigterm) {
 				process.on("SIGTERM", async () => {
