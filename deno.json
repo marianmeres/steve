@@ -1,6 +1,6 @@
 {
 	"name": "@marianmeres/steve",
-	"version": "1.5.1",
+	"version": "1.5.2",
 	"exports": "./src/mod.ts",
 	"tasks": {
 		"test": "deno test -A --env-file --watch",
