@@ -133,8 +133,8 @@ export interface JobsOptions {
 /**  */
 function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 	return {
-		tableJobs: `${tablePrefix}job`, // main
-		tableAttempts: `${tablePrefix}job_attempt_log`, // debug log
+		tableJobs: `${tablePrefix}__job`, // main
+		tableAttempts: `${tablePrefix}__job_attempt_log`, // debug log
 	};
 }
 

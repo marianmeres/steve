@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 
-import pg from "pg";
+import type pg from "pg";
 import {
 	ATTEMPT_STATUS,
 	BACKOFF_STRATEGY,
@@ -20,7 +20,7 @@ const tablePrefix = "_foo_";
 const pollTimeoutMs = 100; // be faster in tests
 
 async function _createJobs(
-	db: pg.Client,
+	db: pg.Client | pg.Pool,
 	jobHandler?: JobHandler,
 	jobHandlers?: JobHandlersMap
 ) {

@@ -1,12 +1,12 @@
 // deno-lint-ignore-file no-explicit-any
 
-import pg from "pg";
+import type pg from "pg";
 import { createPg } from "./_pg.ts";
 
 export function testsRunner(
 	tests: {
 		name: string;
-		fn: (ctx: { db: pg.Client }) => void | Promise<void>;
+		fn: (ctx: { db: pg.Pool | pg.Client }) => void | Promise<void>;
 		only?: boolean;
 		ignore?: boolean;
 		raw?: boolean;
