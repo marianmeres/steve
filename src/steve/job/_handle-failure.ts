@@ -43,7 +43,7 @@ export async function _handleJobFailure(
 			)
 		).rows[0];
 	}
-	// schedule retry with exponential backoff
+	// schedule retry with potential backoff
 	else {
 		let backoffMs = 0;
 		let strategy = job.backoff_strategy;
