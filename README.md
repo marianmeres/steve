@@ -2,7 +2,7 @@
 
 PostgreSQL based jobs processing manager. 
 
-Supports atomic concurrency, multiple "workers" (job processors), job scheduling, 
+Supports concurrent multiple "workers" (job processors), job scheduling, 
 configurable retry logic, configurable max allowed duration per attempt, configurable backoff 
 strategies, detailed logging and more...
 
@@ -23,12 +23,12 @@ npm i @marianmeres/steve
 ### Job handlers
 
 Job handling function(s) can be specified via constructor options either as a single
-`jobHandler` function or as a `jobHandlers` functions map by type. Both options 
+`jobHandler` function or as a `jobHandlers` functions map (keyed by job type). Both options 
 `jobHandlers` and `jobHandler` can be used together, where the `jobHandlers` map will 
 have priority and `jobHandler` will act as a fallback.
 
 If none of the `jobHandlers` or `jobHandler` options is specified, the system will still be
-normally functional all incoming jobs will be handled with the internal `noop` handler.
+normally functional, all incoming jobs will be handled with the internal `noop` handler.
 
 ### Example
 
@@ -79,7 +79,7 @@ const job = await jobs.create(
         // maximum allowed attempt duration before timing out (zero means no limit)
         max_attempt_duration_ms: 0,
         // 'exp' -> exp. backoff with 2^attempts seconds
-        backoff_strategy: 'exp' // or 'none' 
+        backoff_strategy: 'exp', // or 'none' 
         // timestamp to schedule job run/start in the future
         run_at: Date
     }, // optional options
@@ -92,7 +92,7 @@ const job = await jobs.create(
 
 ## Listening to job events
 
-All `onXYZ` methods below return `unsubscribe` function.
+Both methods below return `unsubscribe` function.
 
 ```typescript
 jobs.onDone('my_job_type', (job: Job) => {
