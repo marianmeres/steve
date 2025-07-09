@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 
+import { createLogger, type Logger } from "@marianmeres/clog";
 import { createPubSub, type Unsubscriber } from "@marianmeres/pubsub";
 import process from "node:process";
 import type pg from "pg";
@@ -16,7 +17,6 @@ import {
 	_schemaDrop,
 	_uninstall,
 } from "./job/_schema.ts";
-import { createLogger, type Logger } from "./utils/logger.ts";
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 
