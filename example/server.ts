@@ -36,10 +36,6 @@ const jobs = new Jobs({
 	},
 });
 
-jobs.onFailure("*", (j: Job) => {
-	console.log("FAILED", j.id);
-});
-
 async function main() {
 	await jobs.start(2);
 

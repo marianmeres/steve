@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import { ensureDir, emptyDir, copySync, walkSync } from "@std/fs";
 import { join } from "@std/path";
 import denoJson from "../deno.json" with { type: "json" };
@@ -83,10 +81,8 @@ const packageJson = {
 		url: "https://github.com/marianmeres/steve/issues",
 	},
 	dependencies: {
-		"@marianmeres/clog": "^2.3.0",
-		"@marianmeres/data-to-sql-params": "^1.4.0",
-		"@marianmeres/parse-boolean": "^1.1.7",
-		"@marianmeres/pubsub": "^2.1.0",
+	},
+	devDependencies: {
 		"@types/node": "latest",
 		"@types/pg": "latest"
 	}
@@ -99,8 +95,16 @@ Deno.writeTextFileSync(
 
 Deno.chdir(outDir);
 
+const dependencies = [
+	"@marianmeres/clog", 
+	"@marianmeres/data-to-sql-params", 
+	"@marianmeres/parse-boolean", 
+	"@marianmeres/pubsub"
+];
+
 ([
-	["npm", { args: ["install"] }],
+	// ["npm", { args: ["install"] }],
+	["npm", { args: ["install", ...dependencies] }],
 	["tsc", { args: ["-p", "tsconfig.json"] }],
 ] as [string, { args: string[]}][]).forEach(([cmd, opts]) => {
 	console.log('--> Executing:', cmd, opts);

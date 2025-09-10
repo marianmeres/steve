@@ -20,7 +20,7 @@ export function testsRunner(
 			def.raw
 				? () => def.fn({ db: null as any })
 				: async () => {
-						const db = await createPg();
+						const db = createPg();
 						try {
 							await def.fn({ db });
 						} catch (e) {
