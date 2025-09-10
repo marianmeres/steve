@@ -255,6 +255,12 @@ export class Jobs {
 		return this;
 	}
 
+	/** Will reset all handlers to initial state */
+	resetHandlers() {
+		this.#jobHandlers = {};
+		this.#jobHandler = undefined;
+	}
+
 	/** Will start the jobs processing. Reasonable value of concurrent workers (job processors)
 	 * would be 2-4. */
 	async start(processorsCount: number = 2): Promise<void> {
