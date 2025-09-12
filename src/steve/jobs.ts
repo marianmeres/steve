@@ -161,8 +161,8 @@ export class Jobs {
 	// event handlers try/catch wraps (they will be triggered outside of typical request handlers...)
 	static #onEventWraps = new Map<CallableFunction, CallableFunction>();
 
-	// so we don't spam the console on some db
-	#processErrorCounter: Record<string, number> = {};
+	// so we don't spam the log...
+	#jobClaimErrorCounter: number = 0;
 
 	constructor(options: JobsOptions) {
 		const {
@@ -212,7 +212,12 @@ export class Jobs {
 
 	async #processJobs(processorId: string): Promise<void> {
 		const noopHandler = (_job: Job) => ({ noop: true });
-		const consecutiveErrorsLimit = 25;
+
+		// this is to prevent log spam... note that this is not used in a "job execution" failure,
+		// but only in "job claiming" failures, which should be mostly if db is unaccessible or similar...
+		// "JOB CLAIM ERROR REPORTING LIMIT"
+		const limit = 10;
+
 		while (!this.#isShuttingDown) {
 			try {
 				const job = await _claimNextJob(this.#context);
@@ -233,30 +238,19 @@ export class Jobs {
 					await sleep(this.pollTimeoutMs);
 				}
 				//
-				if (this.#processErrorCounter[processorId]) {
-					if (
-						this.#processErrorCounter[processorId] >= consecutiveErrorsLimit
-					) {
-						this.#logger?.debug?.(
-							`Error reporting for "${processorId}" is now RESUMED...`
-						);
+				if (this.#jobClaimErrorCounter) {
+					if (this.#jobClaimErrorCounter >= limit) {
+						this.#logger?.debug?.(`Job claim error reporting RESUMED...`);
 					}
-					this.#processErrorCounter[processorId] = 0;
+					this.#jobClaimErrorCounter = 0;
 				}
 			} catch (e: any) {
 				// a little dance to prevent log spam... only allow `limit` consecutive error reports
-				this.#processErrorCounter[processorId] ??= 0;
-				this.#processErrorCounter[processorId]++;
-				if (this.#processErrorCounter[processorId] < consecutiveErrorsLimit) {
-					this.#logger?.error?.(
-						`Job processor "${processorId}": ${e?.stack ?? e}`
-					);
-				} else if (
-					this.#processErrorCounter[processorId] === consecutiveErrorsLimit
-				) {
-					this.#logger?.debug?.(
-						`Error reporting for "${processorId}" is now MUTED...`
-					);
+				this.#jobClaimErrorCounter++;
+				if (this.#jobClaimErrorCounter < limit) {
+					this.#logger?.error?.(`Job claim: ${e?.stack ?? e}`);
+				} else if (this.#jobClaimErrorCounter === limit) {
+					this.#logger?.debug?.(`Job claim error reporting MUTED...`);
 				} // else swallow
 			}
 		}
