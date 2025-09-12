@@ -13,7 +13,7 @@
 		"@marianmeres/data-to-sql-params": "jsr:@marianmeres/data-to-sql-params@^1.4.0",
 		"@marianmeres/demino": "jsr:@marianmeres/demino@^1.0.57",
 		"@marianmeres/parse-boolean": "npm:@marianmeres/parse-boolean@^1.1.7",
-		"@marianmeres/pubsub": "jsr:@marianmeres/pubsub@^2.1.1",
+		"@marianmeres/pubsub": "jsr:@marianmeres/pubsub@^2.2.0",
 		"@std/assert": "jsr:@std/assert@^1.0.14",
 		"@std/fs": "jsr:@std/fs@^1.0.19",
 		"@std/path": "jsr:@std/path@^1.1.2",
