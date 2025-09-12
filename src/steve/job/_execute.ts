@@ -16,6 +16,9 @@ export async function _executeJob(
 ) {
 	const attemptId = await _logAttemptStart(context, job);
 
+	// we also need to publish "running" state as attempt (so we can track every state change effectively)
+	context.pubsubAttempt.publish(job.type, job);
+
 	try {
 		let __handler = () => handler(job);
 

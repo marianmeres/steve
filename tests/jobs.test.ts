@@ -161,7 +161,7 @@ testsRunner([
 
 			assertEquals(_errorCounter, 2);
 			assertEquals(_executionCounter, 3);
-			assertEquals(attemptCounter, 3);
+			assertEquals(attemptCounter, 3 + 3); // 3 running + 3 completed
 			assertEquals(doneCounter, 1);
 
 			// we must see 3 logged executions system messages

@@ -102,9 +102,13 @@ jobs.onDone('my_job_type', (job: Job) => {
 });
 
 jobs.onAttempt('my_job_type', (job: Job) => {
-    // maybe completed, maybe failed, maybe pending (planned retry)... see `job.status`
+    // maybe running, completed, maybe failed, maybe pending (planned retry)... see `job.status`
 });
 ```
+
+Note that the `onAttempt` is fired twice for each "physical" attempt - once just when 
+the job is claimed and is starting the execution (with status `running`) and once when 
+the execution is done (with one of the `completed`, `failed` or `pending`).
 
 ## Examining the job manually
 
