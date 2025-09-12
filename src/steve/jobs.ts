@@ -385,24 +385,37 @@ export class Jobs {
 	}
 
 	/** Subscribe callback to processed (done) job, which is either success or failure */
-	onDone(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.#pubsubDone, type, cb);
+	onDone(
+		type: string | string[],
+		cb: (job: Job) => void,
+		skipIfExists = true
+	): Unsubscriber {
+		return this.#onEvent(this.#pubsubDone, type, cb, skipIfExists);
 	}
 
 	/** Subscribe callback to every attempt */
-	onAttempt(type: string | string[], cb: (job: Job) => void): Unsubscriber {
-		return this.#onEvent(this.#pubsubAttempt, type, cb);
+	onAttempt(
+		type: string | string[],
+		cb: (job: Job) => void,
+		skipIfExists = true
+	): Unsubscriber {
+		return this.#onEvent(this.#pubsubAttempt, type, cb, skipIfExists);
 	}
 
 	/** Internal DRY helper */
 	#onEvent(
 		pubsub: ReturnType<typeof createPubSub>,
 		type: string | string[],
-		cb: (job: Job) => void
+		cb: (job: Job) => void,
+		skipIfExists: boolean
 	): Unsubscriber {
 		const types = Array.isArray(type) ? type : [type];
 		const unsubs: any[] = [];
-		types.forEach((t) => unsubs.push(pubsub.subscribe(t, cb)));
+		types.forEach((t) => {
+			if (!skipIfExists || !pubsub.isSubscribed(t, cb)) {
+				unsubs.push(pubsub.subscribe(t, cb));
+			}
+		});
 		return () => unsubs.forEach((u) => u());
 	}
 
