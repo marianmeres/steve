@@ -319,7 +319,9 @@ export class Jobs {
 			this.#jobProcessors.push(processor);
 			// this.#logger?.debug?.(`Processor '${processorId}' initialized`);
 		}
-		this.#logger?.debug?.(`${processorsCount} job processors are initialized`);
+		this.#logger?.debug?.(
+			`Job processors initialized (count: ${processorsCount})...`
+		);
 	}
 
 	/** Will gracefully stop all running job processors */
