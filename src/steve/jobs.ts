@@ -158,6 +158,9 @@ export class Jobs {
 	#activeJobs = new Set();
 	#jobProcessors: Promise<void>[] = [];
 
+	// event handlers try/catch wraps (they will be triggered outside of typical request handlers...)
+	static #onEventWraps = new Map<CallableFunction, CallableFunction>();
+
 	constructor(options: JobsOptions) {
 		const {
 			jobHandler,
@@ -207,22 +210,26 @@ export class Jobs {
 	async #processJobs(processorId: string): Promise<void> {
 		const noopHandler = (_job: Job) => ({ noop: true });
 		while (!this.#isShuttingDown) {
-			const job = await _claimNextJob(this.#context);
-			if (job) {
-				this.#activeJobs.add(job.id);
-				try {
-					this.#logger?.debug?.(`Executing job ${job.id}...`);
-					await _executeJob(
-						this.#context,
-						job,
-						// try handler by type, fallback to global, fallback to noop
-						this.#jobHandlers[job.type] ?? this.#jobHandler ?? noopHandler
-					);
-				} finally {
-					this.#activeJobs.delete(job.id);
+			try {
+				const job = await _claimNextJob(this.#context);
+				if (job) {
+					this.#activeJobs.add(job.id);
+					try {
+						this.#logger?.debug?.(`Executing job ${job.id}...`);
+						await _executeJob(
+							this.#context,
+							job,
+							// try handler by type, fallback to global, fallback to noop
+							this.#jobHandlers[job.type] ?? this.#jobHandler ?? noopHandler
+						);
+					} finally {
+						this.#activeJobs.delete(job.id);
+					}
+				} else {
+					await sleep(this.pollTimeoutMs);
 				}
-			} else {
-				await sleep(this.pollTimeoutMs);
+			} catch (e) {
+				this.#logger?.error?.(`Job processor "${processorId}": ${e}`);
 			}
 		}
 
@@ -237,7 +244,7 @@ export class Jobs {
 			}
 		}
 
-		this.#logger?.debug?.(`Job processor '${processorId}' stopped`);
+		this.#logger?.debug?.(`Job processor "${processorId}" stopped`);
 	}
 
 	/** Does any handler exist for given job type? */
@@ -264,13 +271,19 @@ export class Jobs {
 	/** Will start the jobs processing. Reasonable value of concurrent workers (job processors)
 	 * would be 2-4. */
 	async start(processorsCount: number = 2): Promise<void> {
-		if (this.#isShuttingDown) {
-			const msg = `Cannot start (shutdown in progress detected)`;
-			this.#logger?.error?.(msg);
-			throw new Error(msg);
-		}
+		try {
+			if (this.#isShuttingDown) {
+				const msg = `Cannot start (shutdown in progress detected)`;
+				this.#logger?.error?.(msg);
+				throw new Error(msg);
+			}
 
-		await this.#initializeOnce();
+			await this.#initializeOnce();
+		} catch (e) {
+			this.#logger?.error?.(`Unable to start: ${e}`);
+			this.#logger?.error?.(`JOBS NOT STARTED`);
+			return;
+		}
 
 		for (let i = 0; i < processorsCount; i++) {
 			const processorId = `processor-${i}`;
@@ -411,9 +424,27 @@ export class Jobs {
 	): Unsubscriber {
 		const types = Array.isArray(type) ? type : [type];
 		const unsubs: any[] = [];
+
+		// wrap callback to make sure it will not kill the server on unhandled error
+		// (the onEvent handlers will be triggered outside of typical webserver request handlers)
+		if (!Jobs.#onEventWraps.has(cb)) {
+			Jobs.#onEventWraps.set(cb, async (job: Job) => {
+				try {
+					await cb(job);
+				} catch (e) {
+					this.#logger?.error?.(`onEvent ${type}: ${e}`);
+				}
+			});
+		}
+		const wrapped = Jobs.#onEventWraps.get(cb) as any;
+
 		types.forEach((t) => {
-			if (!skipIfExists || !pubsub.isSubscribed(t, cb)) {
-				unsubs.push(pubsub.subscribe(t, cb));
+			if (!skipIfExists || !pubsub.isSubscribed(t, wrapped)) {
+				const unsub = pubsub.subscribe(t, wrapped);
+				unsubs.push(() => {
+					unsub();
+					Jobs.#onEventWraps.delete(cb);
+				});
 			}
 		});
 		return () => unsubs.forEach((u) => u());
