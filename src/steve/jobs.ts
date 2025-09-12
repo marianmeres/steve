@@ -161,6 +161,9 @@ export class Jobs {
 	// event handlers try/catch wraps (they will be triggered outside of typical request handlers...)
 	static #onEventWraps = new Map<CallableFunction, CallableFunction>();
 
+	// so we don't spam the console on some db
+	#processErrorCounter: Record<string, number> = {};
+
 	constructor(options: JobsOptions) {
 		const {
 			jobHandler,
@@ -209,6 +212,7 @@ export class Jobs {
 
 	async #processJobs(processorId: string): Promise<void> {
 		const noopHandler = (_job: Job) => ({ noop: true });
+		const consecutiveErrorsLimit = 25;
 		while (!this.#isShuttingDown) {
 			try {
 				const job = await _claimNextJob(this.#context);
@@ -228,8 +232,32 @@ export class Jobs {
 				} else {
 					await sleep(this.pollTimeoutMs);
 				}
-			} catch (e) {
-				this.#logger?.error?.(`Job processor "${processorId}": ${e}`);
+				//
+				if (this.#processErrorCounter[processorId]) {
+					if (
+						this.#processErrorCounter[processorId] >= consecutiveErrorsLimit
+					) {
+						this.#logger?.debug?.(
+							`Error reporting for "${processorId}" is now RESUMED...`
+						);
+					}
+					this.#processErrorCounter[processorId] = 0;
+				}
+			} catch (e: any) {
+				// a little dance to prevent log spam... only allow `limit` consecutive error reports
+				this.#processErrorCounter[processorId] ??= 0;
+				this.#processErrorCounter[processorId]++;
+				if (this.#processErrorCounter[processorId] < consecutiveErrorsLimit) {
+					this.#logger?.error?.(
+						`Job processor "${processorId}": ${e?.stack ?? e}`
+					);
+				} else if (
+					this.#processErrorCounter[processorId] === consecutiveErrorsLimit
+				) {
+					this.#logger?.debug?.(
+						`Error reporting for "${processorId}" is now MUTED...`
+					);
+				} // else swallow
 			}
 		}
 
@@ -286,11 +314,12 @@ export class Jobs {
 		}
 
 		for (let i = 0; i < processorsCount; i++) {
-			const processorId = `processor-${i}`;
+			const processorId = `job-processor-${i}`;
 			const processor = this.#processJobs(processorId);
 			this.#jobProcessors.push(processor);
-			this.#logger?.debug?.(`Processor '${processorId}' initialized`);
+			// this.#logger?.debug?.(`Processor '${processorId}' initialized`);
 		}
+		this.#logger?.debug?.(`${processorsCount} job processors are initialized`);
 	}
 
 	/** Will gracefully stop all running job processors */
