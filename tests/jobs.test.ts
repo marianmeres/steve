@@ -422,4 +422,42 @@ testsRunner([
 		},
 		// only: true,
 	},
+	{
+		name: "onDoneFor, onAttemptFor",
+		async fn({ db }) {
+			const onDoneLog: any[] = [];
+			const onAttemptLog: any[] = [];
+
+			const jobs = await _createJobs(db);
+
+			let job = await jobs.create("foo", { bar: "baz" });
+
+			jobs.onDoneFor(job.uid, (j: Job) => onDoneLog.push(j));
+			jobs.onAttemptFor(job.uid, (j: Job) => onAttemptLog.push(j));
+
+			assertEquals(
+				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
+				1
+			);
+			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
+
+			await jobs.start(1);
+
+			await sleep(100);
+
+			assertEquals(onDoneLog.length, 1);
+			assertEquals(onAttemptLog.length, 2); // running + completed
+
+			assertEquals(
+				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
+				0
+			);
+			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
+
+			// teardown
+			await jobs.stop();
+			jobs.unsubscribeAll();
+		},
+		// only: true,
+	},
 ]);

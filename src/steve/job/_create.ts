@@ -25,7 +25,10 @@ export async function _create(
 	const job = rows[0] as Job;
 
 	if (typeof onDone === "function") {
-		context.onDoneCallbacks.set(job.uid, onDone);
+		if (!context.onDoneCallbacks.has(job.uid)) {
+			context.onDoneCallbacks.set(job.uid, new Set());
+		}
+		context.onDoneCallbacks.get(job.uid)?.add(onDone);
 	}
 
 	return job;

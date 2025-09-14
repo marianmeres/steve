@@ -13,7 +13,7 @@ export async function _handleJobFailure(
 	job: Job,
 	attemptId: number,
 	error: any
-): Promise<Job | null> {
+): Promise<Job> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 

@@ -19,6 +19,8 @@ export async function _executeJob(
 	// we also need to publish "running" state as attempt (so we can track every state change effectively)
 	context.pubsubAttempt.publish(job.type, job);
 
+	context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(job));
+
 	try {
 		let __handler = () => handler(job);
 
@@ -41,11 +43,13 @@ export async function _executeJob(
 		); // TX
 
 		context.pubsubAttempt.publish(job.type, completedJob);
+		context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(completedJob));
 		_execOnDone(context, completedJob);
 	} catch (error) {
 		const failedJob = await _handleJobFailure(context, job, attemptId, error); // TX
 		// publish every failed attempt (which may be a retry)
 		context.pubsubAttempt.publish(job.type, failedJob);
+		context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(failedJob));
 
 		// also, true failure
 		if (failedJob?.status === JOB_STATUS.FAILED) {
@@ -59,8 +63,9 @@ function _execOnDone(context: JobContext, job: Job) {
 	context.pubsubDone.publish(job.type, job);
 
 	// call the callback (if exists)
-	context.onDoneCallbacks.get(job.uid)?.(job);
+	context.onDoneCallbacks.get(job.uid)?.forEach((cb) => cb(job));
 
 	// cleanup
 	context.onDoneCallbacks.delete(job.uid);
+	context.onAttemptCallbacks.delete(job.uid);
 }

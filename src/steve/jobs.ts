@@ -60,7 +60,8 @@ export interface JobContext {
 	logger: Logger;
 	pubsubAttempt: ReturnType<typeof createPubSub>;
 	pubsubDone: ReturnType<typeof createPubSub>;
-	onDoneCallbacks: Map<string, JobAwareFn>;
+	onDoneCallbacks: Map<string, Set<JobAwareFn>>;
+	onAttemptCallbacks: Map<string, Set<JobAwareFn>>;
 }
 
 /** The job row */
@@ -148,7 +149,8 @@ export class Jobs {
 	#jobHandler: JobHandler | undefined;
 	#jobHandlers: JobHandlersMap;
 	#logger: Logger;
-	#onDoneCallbacks: Map<string, JobAwareFn> = new Map();
+	#onDoneCallbacks: Map<string, Set<JobAwareFn>> = new Map();
+	#onAttemptCallbacks: Map<string, Set<JobAwareFn>> = new Map();
 	#pubsubAttempt: ReturnType<typeof createPubSub> = createPubSub();
 	#pubsubDone: ReturnType<typeof createPubSub> = createPubSub();
 	#context: JobContext;
@@ -190,6 +192,7 @@ export class Jobs {
 			pubsubDone: this.#pubsubDone,
 			pubsubAttempt: this.#pubsubAttempt,
 			onDoneCallbacks: this.#onDoneCallbacks,
+			onAttemptCallbacks: this.#onAttemptCallbacks,
 		};
 	}
 
@@ -422,7 +425,23 @@ export class Jobs {
 		return await _uninstall(this.#context);
 	}
 
-	/** Subscribe callback to processed (done) job, which is either success or failure */
+	/** Will execute given callback only when exactly jobUid is done */
+	onDoneFor(jobUid: string, cb: (job: Job) => void) {
+		if (!this.#onDoneCallbacks.has(jobUid)) {
+			this.#onDoneCallbacks.set(jobUid, new Set());
+		}
+		this.#onDoneCallbacks.get(jobUid)?.add(cb);
+	}
+
+	/** Will execute given callback only when exactly jobUid executed an attempt */
+	onAttemptFor(jobUid: string, cb: (job: Job) => void) {
+		if (!this.#onAttemptCallbacks.has(jobUid)) {
+			this.#onAttemptCallbacks.set(jobUid, new Set());
+		}
+		this.#onAttemptCallbacks.get(jobUid)?.add(cb);
+	}
+
+	/** Subscribe callback to any processed (done) job, which is either success or failure */
 	onDone(
 		type: string | string[],
 		cb: (job: Job) => void,
@@ -485,12 +504,16 @@ export class Jobs {
 	__debugDump(): {
 		pubsubAttempt: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
 		pubsubDone: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
-		onDoneCallbacks: Record<string, JobAwareFn>;
+		onDoneCallbacks: Record<string, Set<JobAwareFn>>;
+		onAttemptCallbacks: Record<string, Set<JobAwareFn>>;
 	} {
 		return {
 			pubsubAttempt: this.#pubsubAttempt.__dump(),
 			pubsubDone: this.#pubsubDone.__dump(),
 			onDoneCallbacks: Object.fromEntries(this.#onDoneCallbacks.entries()),
+			onAttemptCallbacks: Object.fromEntries(
+				this.#onAttemptCallbacks.entries()
+			),
 		};
 	}
 
