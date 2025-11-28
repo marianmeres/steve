@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import type { JobContext } from "../jobs.ts";
 
 /** Will collect some basic stats about the jobs since `sinceHours` */

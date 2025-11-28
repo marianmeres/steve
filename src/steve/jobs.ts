@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import { createLogger, type Logger } from "@marianmeres/clog";
 import { createPubSub, type Unsubscriber } from "@marianmeres/pubsub";
 import process from "node:process";
@@ -19,6 +17,12 @@ import {
 } from "./job/_schema.ts";
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
+import { withDbRetry, type DbRetryOptions } from "./utils/with-db-retry.ts";
+import {
+	checkDbHealth,
+	DbHealthMonitor,
+	type DbHealthStatus,
+} from "./utils/db-health.ts";
 
 /** Job statuses */
 export const JOB_STATUS = {
@@ -129,6 +133,16 @@ export interface JobsOptions {
 	logger?: Logger;
 	/** Will listen on SIGTERM and try to gracefully stop all running job processors. */
 	gracefulSigterm?: boolean;
+	/** Database retry configuration (true = use defaults, or provide custom options) */
+	dbRetry?: DbRetryOptions | boolean;
+	/** Enable automatic database health monitoring (true = use defaults, or provide custom options) */
+	dbHealthCheck?:
+		| boolean
+		| {
+				intervalMs?: number;
+				onUnhealthy?: (status: DbHealthStatus) => void;
+				onHealthy?: (status: DbHealthStatus) => void;
+		  };
 }
 
 /**  */
@@ -166,6 +180,10 @@ export class Jobs {
 	// so we don't spam the log...
 	#jobClaimErrorCounter: number = 0;
 
+	// database retry and health monitoring
+	#dbRetryOptions: DbRetryOptions | null = null;
+	#healthMonitor: DbHealthMonitor | null = null;
+
 	constructor(options: JobsOptions) {
 		const {
 			jobHandler,
@@ -175,6 +193,8 @@ export class Jobs {
 			tablePrefix = "",
 			logger = createLogger("jobs"),
 			gracefulSigterm = true,
+			dbRetry,
+			dbHealthCheck,
 		} = options || {};
 
 		this.#db = db;
@@ -185,6 +205,22 @@ export class Jobs {
 		this.tablePrefix = tablePrefix;
 		this.gracefulSigterm = gracefulSigterm;
 
+		// Setup retry options
+		if (dbRetry) {
+			this.#dbRetryOptions =
+				dbRetry === true ? { logger: this.#logger } : { ...dbRetry, logger: this.#logger };
+		}
+
+		// Setup health monitor
+		if (dbHealthCheck) {
+			const healthOptions =
+				dbHealthCheck === true
+					? { logger: this.#logger }
+					: { ...dbHealthCheck, logger: this.#logger };
+
+			this.#healthMonitor = new DbHealthMonitor(this.#db, healthOptions);
+		}
+
 		this.#context = {
 			db: this.#db,
 			tableNames: tableNames(tablePrefix),
@@ -194,6 +230,14 @@ export class Jobs {
 			onDoneCallbacks: this.#onDoneCallbacks,
 			onAttemptCallbacks: this.#onAttemptCallbacks,
 		};
+	}
+
+	/** Wrapper for database operations with retry */
+	async #withRetry<T>(fn: () => Promise<T>): Promise<T> {
+		if (this.#dbRetryOptions) {
+			return await withDbRetry(fn, this.#dbRetryOptions);
+		}
+		return await fn();
 	}
 
 	async #initializeOnce(hard?: boolean | undefined) {
@@ -223,7 +267,7 @@ export class Jobs {
 
 		while (!this.#isShuttingDown) {
 			try {
-				const job = await _claimNextJob(this.#context);
+				const job = await this.#withRetry(() => _claimNextJob(this.#context));
 				if (job) {
 					this.#activeJobs.add(job.id);
 					try {
@@ -304,6 +348,12 @@ export class Jobs {
 			}
 
 			await this.#initializeOnce();
+
+			// Start health monitor
+			if (this.#healthMonitor) {
+				await this.#healthMonitor.start();
+				this.#logger?.debug?.("DB health monitoring started");
+			}
 		} catch (e) {
 			this.#logger?.error?.(`Unable to start: ${e}`);
 			this.#logger?.error?.(`JOBS NOT STARTED`);
@@ -323,6 +373,12 @@ export class Jobs {
 
 	/** Will gracefully stop all running job processors */
 	async stop() {
+		// Stop health monitor
+		if (this.#healthMonitor) {
+			this.#healthMonitor.stop();
+			this.#logger?.debug?.("DB health monitoring stopped");
+		}
+
 		this.#isShuttingDown = true;
 		await Promise.all(this.#jobProcessors);
 		this.#jobProcessors = [];
@@ -498,6 +554,16 @@ export class Jobs {
 	unsubscribeAll(): void {
 		this.#pubsubAttempt.unsubscribeAll();
 		this.#pubsubDone.unsubscribeAll();
+	}
+
+	/** Get current database health status (returns null if health monitoring is not enabled) */
+	getDbHealth(): DbHealthStatus | null {
+		return this.#healthMonitor?.getLastStatus() ?? null;
+	}
+
+	/** Manually check database health */
+	async checkDbHealth(): Promise<DbHealthStatus> {
+		return await checkDbHealth(this.#db, this.#logger);
 	}
 
 	/** For internal debugging */

@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 /** Will quote identifier for pg dialect */
 export function pgQuoteIdentifier(key: string): string {
 	return `"${`${key}`.replaceAll('"', '""')}"`;

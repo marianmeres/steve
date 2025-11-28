@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import type pg from "pg";
 import { createPg } from "./_pg.ts";
 

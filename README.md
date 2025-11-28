@@ -1,10 +1,10 @@
 # @marianmeres/steve
 
-PostgreSQL based jobs processing manager. 
+PostgreSQL based jobs processing manager.
 
-Supports concurrent multiple "workers" (job processors), job scheduling, 
-configurable retry logic, configurable max allowed duration per attempt, configurable backoff 
-strategies, detailed logging and more...
+Supports concurrent multiple "workers" (job processors), job scheduling,
+configurable retry logic, configurable max allowed duration per attempt, configurable backoff
+strategies, database resilience with automatic retries, health monitoring, detailed logging and more...
 
 Uses [node-postgres](https://node-postgres.com/) internally.
 
@@ -37,11 +37,11 @@ import { Jobs } from "@marianmeres/steve";
 
 // the manager instance
 const jobs = new Jobs({
-    // pg.Pool or pg.Client 
-    db, 
+    // pg.Pool or pg.Client
+    db,
     // global job handler for all jobs
     jobHandler: (job: Job) => {
-        // Do the work... 
+        // Do the work...
         // Must throw on error.
         // Returned data will be available as the `result` prop.
     },
@@ -52,6 +52,10 @@ const jobs = new Jobs({
     },
     // how long should the worker be idle before trying to claim a new job
     pollIntervalMs, // default 1_000
+    // optional: enable database retry on transient failures (default: disabled)
+    dbRetry: true, // or provide custom options
+    // optional: enable database health monitoring (default: disabled)
+    dbHealthCheck: true, // or provide custom options
 });
 
 // later, as new job types are needed, just re/set the handler
@@ -127,6 +131,55 @@ jobs.fetchAll(
     options: Partial<{ limit: number; offset: number; }> = {}
 ): Promise<Job[]>
 ```
+
+## Database Resilience
+
+Steve includes built-in database retry logic and health monitoring for production environments.
+
+### Database Retry
+
+Automatically retry database operations on transient failures (connection timeouts, resets, etc.):
+
+```typescript
+const jobs = new Jobs({
+    db,
+    // Enable with defaults
+    dbRetry: true,
+    // Or customize
+    dbRetry: {
+        maxRetries: 5,
+        initialDelayMs: 200,
+        maxDelayMs: 10_000,
+    },
+});
+```
+
+### Health Monitoring
+
+Monitor database health with periodic checks and callbacks:
+
+```typescript
+const jobs = new Jobs({
+    db,
+    // Enable with defaults (checks every 30s)
+    dbHealthCheck: true,
+    // Or customize
+    dbHealthCheck: {
+        intervalMs: 60_000,
+        onUnhealthy: (status) => console.error('DB unhealthy!', status),
+        onHealthy: (status) => console.log('DB recovered!', status),
+    },
+});
+
+// Check health anytime
+const health = jobs.getDbHealth();
+console.log('DB healthy?', health?.healthy);
+
+// Or manually trigger a check
+const currentHealth = await jobs.checkDbHealth();
+```
+
+See [USAGE_DB_RESILIENCE.md](USAGE_DB_RESILIENCE.md) for detailed configuration options.
 
 ## The Interfaces
 

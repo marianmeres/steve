@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import type { Job, JobAwareFn, JobContext, JobCreateDTO } from "../jobs.ts";
 import { dataToSqlParams } from "@marianmeres/data-to-sql-params";
 

@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import {
 	ATTEMPT_STATUS,
 	type Job,

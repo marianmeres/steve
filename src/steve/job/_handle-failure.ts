@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import {
 	BACKOFF_STRATEGY,
 	JOB_STATUS,

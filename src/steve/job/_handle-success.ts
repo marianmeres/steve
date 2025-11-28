@@ -1,5 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
-
 import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
 import { _logAttemptSuccess } from "./_log-attempt.ts";
 
