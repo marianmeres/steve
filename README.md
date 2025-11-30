@@ -1,5 +1,8 @@
 # @marianmeres/steve
 
+[![NPM version](https://img.shields.io/npm/v/@marianmeres/steve.svg)](https://www.npmjs.com/package/@marianmeres/steve)
+[![JSR version](https://jsr.io/badges/@marianmeres/steve)](https://jsr.io/@marianmeres/steve)
+
 PostgreSQL based jobs processing manager.
 
 Supports concurrent multiple "workers" (job processors), job scheduling,
