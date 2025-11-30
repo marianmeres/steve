@@ -8,3 +8,4 @@ dist
 demo/demodb.sqlite3
 tmp/*
 .npm-dist
+.claude

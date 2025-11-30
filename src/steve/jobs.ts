@@ -1,4 +1,4 @@
-import { createLogger, type Logger } from "@marianmeres/clog";
+import { createClog, type Logger } from "@marianmeres/clog";
 import { createPubSub, type Unsubscriber } from "@marianmeres/pubsub";
 import process from "node:process";
 import type pg from "pg";
@@ -191,7 +191,7 @@ export class Jobs {
 			db,
 			pollTimeoutMs = 1_000,
 			tablePrefix = "",
-			logger = createLogger("jobs"),
+			logger = createClog("jobs"),
 			gracefulSigterm = true,
 			dbRetry,
 			dbHealthCheck,
@@ -208,7 +208,9 @@ export class Jobs {
 		// Setup retry options
 		if (dbRetry) {
 			this.#dbRetryOptions =
-				dbRetry === true ? { logger: this.#logger } : { ...dbRetry, logger: this.#logger };
+				dbRetry === true
+					? { logger: this.#logger }
+					: { ...dbRetry, logger: this.#logger };
 		}
 
 		// Setup health monitor
