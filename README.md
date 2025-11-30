@@ -239,3 +239,10 @@ deno task example
 ```
 
 Once deps are installed and server is running, just visit http://localhost:8000.
+
+## Package Identity
+
+- **Name:** @marianmeres/steve
+- **Author:** Marian Meres
+- **Repository:** https://github.com/marianmeres/steve
+- **License:** MIT
