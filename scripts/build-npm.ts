@@ -11,5 +11,7 @@ await npmBuild({
 		"@marianmeres/data-to-sql-params",
 		"@marianmeres/parse-boolean",
 		"@marianmeres/pubsub",
+		"pg",
+		"@types/pg",
 	],
 });
