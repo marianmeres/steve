@@ -1,16 +1,47 @@
+/**
+ * @module db-health
+ *
+ * Provides database health checking and monitoring utilities.
+ * Includes one-time health checks and periodic monitoring with
+ * state change callbacks.
+ */
+
 import type pg from "pg";
 import type { Logger } from "@marianmeres/clog";
 
+/**
+ * Represents the result of a database health check.
+ */
 export interface DbHealthStatus {
+	/** Whether the database is healthy and responding */
 	healthy: boolean;
+	/** Query latency in milliseconds, or null if check failed */
 	latencyMs: number | null;
+	/** Error message if the check failed */
 	error: string | null;
+	/** Timestamp of the health check */
 	timestamp: Date;
+	/** PostgreSQL version string (if healthy) */
 	pgVersion?: string;
 }
 
 /**
- * Performs a simple health check against the database
+ * Performs a one-time health check against the database.
+ *
+ * Executes a simple query to verify connectivity and measure latency.
+ * Also retrieves the PostgreSQL version.
+ *
+ * @param db - PostgreSQL connection pool or client
+ * @param logger - Optional logger for error reporting
+ * @returns Health status with connectivity, latency, and version info
+ *
+ * @example
+ * ```typescript
+ * const status = await checkDbHealth(pool);
+ * if (!status.healthy) {
+ *   console.error(`DB error: ${status.error}`);
+ * }
+ * ```
  */
 export async function checkDbHealth(
 	db: pg.Pool | pg.Client,
@@ -45,7 +76,23 @@ export async function checkDbHealth(
 }
 
 /**
- * Periodic health check monitor
+ * Periodic database health monitor with state change callbacks.
+ *
+ * Continuously monitors database health and triggers callbacks when
+ * the database transitions between healthy and unhealthy states.
+ *
+ * @example
+ * ```typescript
+ * const monitor = new DbHealthMonitor(pool, {
+ *   intervalMs: 30000,
+ *   onUnhealthy: (status) => alertOps(status.error),
+ *   onHealthy: () => clearAlert(),
+ * });
+ *
+ * await monitor.start();
+ * // Later...
+ * monitor.stop();
+ * ```
  */
 export class DbHealthMonitor {
 	#db: pg.Pool | pg.Client;
@@ -57,22 +104,40 @@ export class DbHealthMonitor {
 	#onUnhealthy?: (status: DbHealthStatus) => void;
 	#onHealthy?: (status: DbHealthStatus) => void;
 
+	/**
+	 * Creates a new DbHealthMonitor instance.
+	 *
+	 * @param db - PostgreSQL connection pool or client
+	 * @param options - Monitor configuration options
+	 */
 	constructor(
 		db: pg.Pool | pg.Client,
 		options: {
+			/** Check interval in milliseconds (default: 30000) */
 			intervalMs?: number;
+			/** Logger for status messages */
 			logger?: Logger;
+			/** Callback when database becomes unhealthy */
 			onUnhealthy?: (status: DbHealthStatus) => void;
+			/** Callback when database recovers */
 			onHealthy?: (status: DbHealthStatus) => void;
 		} = {}
 	) {
 		this.#db = db;
 		this.#logger = options.logger;
-		this.#intervalMs = options.intervalMs || 30_000; // default 30s
+		this.#intervalMs = options.intervalMs || 30_000;
 		this.#onUnhealthy = options.onUnhealthy;
 		this.#onHealthy = options.onHealthy;
 	}
 
+	/**
+	 * Starts periodic health monitoring.
+	 *
+	 * Performs an initial check immediately, then schedules subsequent
+	 * checks at the configured interval.
+	 *
+	 * @returns A Promise that resolves after the first check completes
+	 */
 	async start(): Promise<void> {
 		if (this.#isRunning) return;
 
@@ -80,6 +145,11 @@ export class DbHealthMonitor {
 		await this.#scheduleNext();
 	}
 
+	/**
+	 * Stops periodic health monitoring.
+	 *
+	 * Cancels any pending health checks.
+	 */
 	stop(): void {
 		this.#isRunning = false;
 		if (this.#timeoutId) {
@@ -88,6 +158,11 @@ export class DbHealthMonitor {
 		}
 	}
 
+	/**
+	 * Returns the most recent health check result.
+	 *
+	 * @returns The last health status, or `null` if no check has been performed
+	 */
 	getLastStatus(): DbHealthStatus | null {
 		return this.#lastStatus;
 	}

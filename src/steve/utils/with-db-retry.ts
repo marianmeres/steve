@@ -1,12 +1,29 @@
+/**
+ * @module with-db-retry
+ *
+ * Provides database operation retry functionality with exponential backoff.
+ * Automatically retries on transient database errors like connection timeouts
+ * and network issues.
+ */
+
 import type { Logger } from "@marianmeres/clog";
 import { sleep } from "./sleep.ts";
 
+/**
+ * Configuration options for database retry behavior.
+ */
 export interface DbRetryOptions {
+	/** Maximum number of retry attempts (default: 3) */
 	maxRetries?: number;
+	/** Initial delay before first retry in milliseconds (default: 100) */
 	initialDelayMs?: number;
+	/** Maximum delay between retries in milliseconds (default: 5000) */
 	maxDelayMs?: number;
+	/** Multiplier for exponential backoff (default: 2) */
 	backoffMultiplier?: number;
-	retryableErrors?: string[]; // error codes to retry
+	/** Error codes that should trigger a retry */
+	retryableErrors?: string[];
+	/** Logger instance for retry attempt logging */
 	logger?: Logger;
 }
 
@@ -22,7 +39,23 @@ const DEFAULT_RETRYABLE_ERRORS = [
 ];
 
 /**
- * Wraps a database operation with exponential backoff retry logic
+ * Wraps a database operation with exponential backoff retry logic.
+ *
+ * Automatically retries the operation on transient database errors such as
+ * connection refused, timeouts, and PostgreSQL-specific connection errors.
+ *
+ * @typeParam T - The return type of the wrapped function
+ * @param fn - The async function to execute with retry logic
+ * @param options - Retry configuration options
+ * @returns The result of the function, or throws on final failure
+ *
+ * @example
+ * ```typescript
+ * const result = await withDbRetry(
+ *   async () => await db.query("SELECT * FROM users"),
+ *   { maxRetries: 5, initialDelayMs: 200 }
+ * );
+ * ```
  */
 export async function withDbRetry<T>(
 	fn: () => Promise<T>,

@@ -2,6 +2,7 @@
 
 [![NPM version](https://img.shields.io/npm/v/@marianmeres/steve.svg)](https://www.npmjs.com/package/@marianmeres/steve)
 [![JSR version](https://jsr.io/badges/@marianmeres/steve)](https://jsr.io/@marianmeres/steve)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 PostgreSQL based jobs processing manager.
 
@@ -184,42 +185,9 @@ const currentHealth = await jobs.checkDbHealth();
 
 See [USAGE_DB_RESILIENCE.md](USAGE_DB_RESILIENCE.md) for detailed configuration options.
 
-## The Interfaces
+## API Reference
 
-```typescript
-interface Job {
-    id: number;
-    uid: string;
-    type: string;
-    payload: Record<string, any>;
-    result: null | undefined | Record<string, any>;
-    status:
-        | typeof JOB_STATUS.PENDING
-        | typeof JOB_STATUS.RUNNING
-        | typeof JOB_STATUS.COMPLETED
-        | typeof JOB_STATUS.FAILED;
-    attempts: number;
-    max_attempts: number;
-    created_at: Date;
-    updated_at: Date;
-    started_at: Date;
-    completed_at: Date;
-    run_at: Date;
-    backoff_strategy: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
-}
-
-// the "debug" log of each attempt
-interface JobAttempt {
-    id: number;
-    job_id: string;
-    attempt_number: number;
-    started_at: Date;
-    completed_at: Date;
-    status: typeof ATTEMPT_STATUS.SUCCESS | typeof ATTEMPT_STATUS.ERROR;
-    error_message: null;
-    error_details: null | Record<"stack" | string, any>;
-}
-```
+For complete API documentation, types, and interfaces, see [API.md](API.md).
 
 ## Jobs monitor example
 

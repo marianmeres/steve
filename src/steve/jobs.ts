@@ -24,136 +24,282 @@ import {
 	type DbHealthStatus,
 } from "./utils/db-health.ts";
 
-/** Job statuses */
+/**
+ * Available job statuses.
+ *
+ * - `PENDING` - Job is waiting to be processed
+ * - `RUNNING` - Job is currently being executed
+ * - `COMPLETED` - Job finished successfully
+ * - `FAILED` - Job failed after exhausting all retry attempts
+ * - `EXPIRED` - Job was in running state for too long and was marked as expired
+ */
 export const JOB_STATUS = {
 	PENDING: "pending",
 	RUNNING: "running",
 	COMPLETED: "completed",
 	FAILED: "failed",
-	EXPIRED: "expired", // after in "running" state for too long
-};
+	EXPIRED: "expired",
+} as const;
 
-/** Job attempt log statuses */
+/**
+ * Job attempt log statuses.
+ *
+ * - `SUCCESS` - Attempt completed successfully
+ * - `ERROR` - Attempt failed with an error
+ */
 export const ATTEMPT_STATUS = {
 	SUCCESS: "success",
 	ERROR: "error",
-};
+} as const;
 
-/** Supported backoff strategies */
+/**
+ * Available backoff strategies for retry logic.
+ *
+ * - `NONE` - No delay between retries
+ * - `EXP` - Exponential backoff with 2^attempts seconds delay
+ */
 export const BACKOFF_STRATEGY = {
 	NONE: "none",
-	EXP: "exp", // 2^attempts seconds
-	// ... add another if needed ...
-};
+	EXP: "exp",
+} as const;
 
-/** "Global" job handler worker. Returned result will be saved under `result` */
+/**
+ * Job handler function type.
+ *
+ * A function that processes a job. The returned value will be stored in
+ * the job's `result` field. Must throw an error to indicate failure.
+ *
+ * @param job - The job to process
+ * @returns The result of the job processing, or a Promise resolving to the result
+ */
 export type JobHandler = (job: Job) => any | Promise<any>;
+
+/**
+ * Map of job handlers keyed by job type.
+ *
+ * Used to register different handlers for different job types.
+ */
 export type JobHandlersMap = Record<string, JobHandler | null | undefined>;
 
-/** This is technically the same as JobHandler, but used in different situation (after the
- * job was handled, so naming it differently just to avoid confusion) */
+/**
+ * Callback function that receives a job.
+ *
+ * Used for event callbacks like `onDone` and `onAttempt`.
+ *
+ * @param job - The job that triggered the callback
+ * @returns Any value or a Promise
+ */
 export type JobAwareFn = (job: Job) => any | Promise<any>;
 
-/** Internal context passed to job utilities */
+/**
+ * Internal context passed to job utilities.
+ * @internal
+ */
 export interface JobContext {
+	/** PostgreSQL database connection pool or client */
 	db: pg.Pool | pg.Client;
+	/** Table name configuration */
 	tableNames: {
 		tableJobs: string;
 		tableAttempts: string;
 	};
+	/** Logger instance */
 	logger: Logger;
+	/** PubSub instance for attempt events */
 	pubsubAttempt: ReturnType<typeof createPubSub>;
+	/** PubSub instance for done events */
 	pubsubDone: ReturnType<typeof createPubSub>;
+	/** Callbacks for specific job UID completion */
 	onDoneCallbacks: Map<string, Set<JobAwareFn>>;
+	/** Callbacks for specific job UID attempts */
 	onAttemptCallbacks: Map<string, Set<JobAwareFn>>;
 }
 
-/** The job row */
+/**
+ * Represents a job row in the database.
+ *
+ * Contains all information about a job including its current status,
+ * payload, result, and timing information.
+ */
 export interface Job {
+	/** Internal database ID */
 	id: number;
+	/** Unique identifier for the job (UUID) */
 	uid: string;
+	/** Job type identifier used to route to the appropriate handler */
 	type: string;
+	/** Custom payload data passed when creating the job */
 	payload: Record<string, any>;
+	/** Result returned by the job handler on successful completion */
 	result: null | undefined | Record<string, any>;
+	/** Current status of the job */
 	status:
 		| typeof JOB_STATUS.PENDING
 		| typeof JOB_STATUS.RUNNING
 		| typeof JOB_STATUS.COMPLETED
 		| typeof JOB_STATUS.FAILED;
+	/** Number of execution attempts made */
 	attempts: number;
+	/** Maximum number of attempts before marking as failed */
 	max_attempts: number;
+	/** Maximum allowed duration for a single attempt in milliseconds (0 = no limit) */
 	max_attempt_duration_ms: number;
+	/** Timestamp when the job was created */
 	created_at: Date;
+	/** Timestamp when the job was last updated */
 	updated_at: Date;
+	/** Timestamp when the job started execution */
 	started_at: Date;
+	/** Timestamp when the job completed (success or failure) */
 	completed_at: Date;
+	/** Scheduled time for the job to run (for delayed jobs) */
 	run_at: Date;
+	/** Backoff strategy used between retry attempts */
 	backoff_strategy: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
 }
 
-/** The job attempt log row */
+/**
+ * Represents a job attempt log entry.
+ *
+ * Each execution attempt of a job is logged with its status,
+ * timing, and error details if applicable.
+ */
 export interface JobAttempt {
+	/** Internal database ID */
 	id: number;
+	/** Reference to the parent job ID */
 	job_id: string;
+	/** Sequential number of this attempt (1-based) */
 	attempt_number: number;
+	/** Timestamp when the attempt started */
 	started_at: Date;
+	/** Timestamp when the attempt completed */
 	completed_at: Date;
+	/** Status of the attempt */
 	status: typeof ATTEMPT_STATUS.SUCCESS | typeof ATTEMPT_STATUS.ERROR;
-	error_message: null;
+	/** Error message if the attempt failed */
+	error_message: null | string;
+	/** Additional error details including stack trace */
 	error_details: null | Record<"stack" | string, any>;
 }
 
-/** Allowed options when creating a new job */
+/**
+ * Options for creating a new job.
+ *
+ * All fields are optional and have sensible defaults.
+ */
 export interface JobCreateOptions {
+	/** Maximum number of retry attempts before giving up (default: 3) */
 	max_attempts?: number;
+	/** Maximum allowed duration for a single attempt in ms, 0 = no limit (default: 0) */
 	max_attempt_duration_ms?: number;
+	/** Backoff strategy between retries (default: 'exp') */
 	backoff_strategy?: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
-	/** Optional timestamp to schedule the job run in the future */
+	/** Schedule the job to run at a specific time in the future */
 	run_at?: Date;
 }
 
-/** Supported userland values when creating new job */
+/**
+ * Data transfer object for creating a new job.
+ *
+ * Extends {@link JobCreateOptions} with required type and payload fields.
+ */
 export interface JobCreateDTO extends JobCreateOptions {
+	/** Job type identifier used to route to the appropriate handler */
 	type: string;
+	/** Custom payload data for the job */
 	payload: Record<string, any>;
 }
 
-/** Factory options */
+/**
+ * Configuration options for the Jobs manager.
+ *
+ * @example
+ * ```typescript
+ * const jobs = new Jobs({
+ *   db: pgPool,
+ *   jobHandler: async (job) => { ... },
+ *   pollTimeoutMs: 2000,
+ *   dbRetry: true,
+ *   dbHealthCheck: true,
+ * });
+ * ```
+ */
 export interface JobsOptions {
-	/** One of the two must be present */
+	/** Global job handler function for all job types */
 	jobHandler?: JobHandler;
+	/** Map of handlers keyed by job type (takes priority over jobHandler) */
 	jobHandlers?: JobHandlersMap;
-	/** pg.Pool or pg.Client instance */
+	/** PostgreSQL connection pool or client instance */
 	db: pg.Pool | pg.Client;
-	/** Useful for non-public schema. Leave empty or provide a schema with appending dot "myschema." */
+	/** Table name prefix for non-public schemas (e.g., "myschema.") */
 	tablePrefix?: string;
-	/** Job processor polling interval in milliseconds (default 1_000) */
+	/** Polling interval in milliseconds when no jobs are available (default: 1000) */
 	pollTimeoutMs?: number;
-	/**  */
+	/** Logger instance for debug and error output */
 	logger?: Logger;
-	/** Will listen on SIGTERM and try to gracefully stop all running job processors. */
+	/** Enable SIGTERM listener for graceful shutdown (default: true) */
 	gracefulSigterm?: boolean;
-	/** Database retry configuration (true = use defaults, or provide custom options) */
+	/** Enable database retry on transient failures (true = defaults, or provide options) */
 	dbRetry?: DbRetryOptions | boolean;
-	/** Enable automatic database health monitoring (true = use defaults, or provide custom options) */
+	/** Enable database health monitoring (true = defaults, or provide options) */
 	dbHealthCheck?:
 		| boolean
 		| {
+				/** Health check interval in milliseconds (default: 30000) */
 				intervalMs?: number;
+				/** Callback when database becomes unhealthy */
 				onUnhealthy?: (status: DbHealthStatus) => void;
+				/** Callback when database recovers */
 				onHealthy?: (status: DbHealthStatus) => void;
 		  };
 }
 
-/**  */
+/**
+ * Creates table name configuration with optional prefix.
+ * @internal
+ */
 function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 	return {
-		tableJobs: `${tablePrefix}__job`, // main
-		tableAttempts: `${tablePrefix}__job_attempt_log`, // debug log
+		tableJobs: `${tablePrefix}__job`,
+		tableAttempts: `${tablePrefix}__job_attempt_log`,
 	};
 }
 
-/** Core jobs manager  */
+/**
+ * PostgreSQL-based job processing manager.
+ *
+ * The Jobs class provides a complete solution for managing background jobs with
+ * support for concurrent workers, automatic retries, exponential backoff,
+ * job scheduling, and comprehensive event handling.
+ *
+ * @example
+ * ```typescript
+ * import { Jobs } from "@marianmeres/steve";
+ *
+ * const jobs = new Jobs({
+ *   db: pgPool,
+ *   jobHandler: async (job) => {
+ *     console.log(`Processing job ${job.uid}`);
+ *     return { processed: true };
+ *   },
+ * });
+ *
+ * // Start processing with 2 concurrent workers
+ * await jobs.start(2);
+ *
+ * // Create a new job
+ * const job = await jobs.create("email", { to: "user@example.com" });
+ *
+ * // Listen for job completion
+ * jobs.onDone("email", (job) => {
+ *   console.log(`Job ${job.uid} completed with status: ${job.status}`);
+ * });
+ *
+ * // Graceful shutdown
+ * await jobs.stop();
+ * ```
+ */
 export class Jobs {
 	readonly pollTimeoutMs: number;
 	readonly gracefulSigterm: boolean;
@@ -318,12 +464,33 @@ export class Jobs {
 		this.#logger?.debug?.(`Job processor "${processorId}" stopped`);
 	}
 
-	/** Does any handler exist for given job type? */
+	/**
+	 * Checks if a handler exists for the given job type.
+	 *
+	 * @param type - The job type to check
+	 * @returns `true` if a handler is registered for the type, `false` otherwise
+	 */
 	hasHandler(type: string): boolean {
 		return !!this.#jobHandlers[type];
 	}
 
-	/** Will (un)set handler for given type*/
+	/**
+	 * Registers or removes a handler for a specific job type.
+	 *
+	 * @param type - The job type to register the handler for
+	 * @param handler - The handler function, or `null`/`undefined` to remove
+	 * @returns The Jobs instance for method chaining
+	 *
+	 * @example
+	 * ```typescript
+	 * jobs.setHandler("email", async (job) => {
+	 *   await sendEmail(job.payload);
+	 * });
+	 *
+	 * // Remove handler
+	 * jobs.setHandler("email", null);
+	 * ```
+	 */
 	setHandler(type: string, handler: JobHandler | undefined | null): Jobs {
 		if (typeof handler === "function") {
 			this.#jobHandlers[type] = handler;
@@ -333,14 +500,31 @@ export class Jobs {
 		return this;
 	}
 
-	/** Will reset all handlers to initial state */
-	resetHandlers() {
+	/**
+	 * Removes all registered handlers.
+	 *
+	 * Resets both the type-specific handlers map and the global handler.
+	 */
+	resetHandlers(): void {
 		this.#jobHandlers = {};
 		this.#jobHandler = undefined;
 	}
 
-	/** Will start the jobs processing. Reasonable value of concurrent workers (job processors)
-	 * would be 2-4. */
+	/**
+	 * Starts job processing with the specified number of concurrent workers.
+	 *
+	 * Initializes the database schema if needed and spawns worker processes
+	 * that continuously poll for and execute pending jobs.
+	 *
+	 * @param processorsCount - Number of concurrent job processors (default: 2)
+	 * @returns A Promise that resolves when all processors are initialized
+	 *
+	 * @example
+	 * ```typescript
+	 * // Start with 4 concurrent workers
+	 * await jobs.start(4);
+	 * ```
+	 */
 	async start(processorsCount: number = 2): Promise<void> {
 		try {
 			if (this.#isShuttingDown) {
@@ -373,8 +557,15 @@ export class Jobs {
 		);
 	}
 
-	/** Will gracefully stop all running job processors */
-	async stop() {
+	/**
+	 * Gracefully stops all running job processors.
+	 *
+	 * Waits for all currently executing jobs to complete before stopping.
+	 * Also stops the health monitor if enabled.
+	 *
+	 * @returns A Promise that resolves when all processors have stopped
+	 */
+	async stop(): Promise<void> {
 		// Stop health monitor
 		if (this.#healthMonitor) {
 			this.#healthMonitor.stop();
@@ -387,7 +578,28 @@ export class Jobs {
 		this.#isShuttingDown = false;
 	}
 
-	/** Will create new pending job, ready to be processed */
+	/**
+	 * Creates a new job and adds it to the processing queue.
+	 *
+	 * The job will be picked up by one of the worker processors based on its
+	 * `run_at` time and available capacity.
+	 *
+	 * @param type - Job type identifier used to route to the appropriate handler
+	 * @param payload - Custom data to pass to the job handler
+	 * @param options - Optional configuration for retry, timeout, and scheduling
+	 * @param onDone - Optional callback executed when this specific job completes
+	 * @returns The created Job object with its assigned UID
+	 *
+	 * @example
+	 * ```typescript
+	 * const job = await jobs.create(
+	 *   "send-email",
+	 *   { to: "user@example.com", subject: "Hello" },
+	 *   { max_attempts: 5, backoff_strategy: "exp" }
+	 * );
+	 * console.log(`Created job: ${job.uid}`);
+	 * ```
+	 */
 	async create(
 		type: string,
 		payload: Record<string, any> = {},
@@ -417,7 +629,22 @@ export class Jobs {
 		);
 	}
 
-	/** Will try to find job row by its uid */
+	/**
+	 * Finds a job by its unique identifier.
+	 *
+	 * @param uid - The unique identifier (UUID) of the job
+	 * @param withAttempts - Whether to include attempt history (default: false)
+	 * @returns Object containing the job and optionally its attempt history
+	 *
+	 * @example
+	 * ```typescript
+	 * const { job, attempts } = await jobs.find("abc-123", true);
+	 * if (job) {
+	 *   console.log(`Job status: ${job.status}`);
+	 *   console.log(`Attempts: ${attempts?.length}`);
+	 * }
+	 * ```
+	 */
 	async find(
 		uid: string,
 		withAttempts: boolean = false
@@ -433,7 +660,29 @@ export class Jobs {
 		return { job, attempts };
 	}
 
-	/** Will fetch all, optionally filtering by status(es) */
+	/**
+	 * Fetches all jobs, optionally filtered by status.
+	 *
+	 * @param status - Filter by status (single value or array)
+	 * @param options - Pagination and filtering options
+	 * @param options.limit - Maximum number of jobs to return
+	 * @param options.offset - Number of jobs to skip
+	 * @param options.asc - Sort ascending by created_at (default: descending)
+	 * @param options.sinceMinutesAgo - Only return jobs created within the last N minutes
+	 * @returns Array of jobs matching the criteria
+	 *
+	 * @example
+	 * ```typescript
+	 * // Get all pending jobs
+	 * const pending = await jobs.fetchAll("pending");
+	 *
+	 * // Get failed and expired jobs with pagination
+	 * const failed = await jobs.fetchAll(["failed", "expired"], {
+	 *   limit: 10,
+	 *   offset: 0
+	 * });
+	 * ```
+	 */
 	async fetchAll(
 		status: undefined | null | Job["status"] | Job["status"][] = null,
 		options: Partial<{
@@ -457,62 +706,142 @@ export class Jobs {
 		return await _fetchAll(this.#context, where, options);
 	}
 
-	/** Will do some maintenance cleanups. It's up to the consumer to decide the
-	 * overall cleanup strategy. */
+	/**
+	 * Performs maintenance cleanup tasks.
+	 *
+	 * Currently marks jobs that have been running for too long as expired.
+	 * The cleanup strategy should be called periodically by the consumer.
+	 *
+	 * @returns A Promise that resolves when cleanup is complete
+	 */
 	async cleanup(): Promise<void> {
-		// this does not make much sense to initialize on cleanup... but keeping the convention
 		await this.#initializeOnce();
 		return await _markExpired(this.#context);
-		// todo: hard delete old?
 	}
 
-	/** Will collect some stats... */
-	async healthPreview(sinceMinutesAgo = 60): Promise<any[]> {
+	/**
+	 * Collects job statistics for health monitoring.
+	 *
+	 * @param sinceMinutesAgo - Time window for statistics (default: 60 minutes)
+	 * @returns Array of statistics grouped by status with counts and durations
+	 *
+	 * @example
+	 * ```typescript
+	 * const stats = await jobs.healthPreview(30);
+	 * // Returns counts and avg durations per status
+	 * ```
+	 */
+	async healthPreview(sinceMinutesAgo: number = 60): Promise<any[]> {
 		await this.#initializeOnce();
 		return await _healthPreview(this.#context, sinceMinutesAgo);
 	}
 
-	/** Optional: manually initialize if needed. Use with caution as hard init will recreate
-	 * tables (you will loose data). Intended to be used in tests only. */
+	/**
+	 * Reinitializes the database schema by dropping and recreating tables.
+	 *
+	 * **Warning:** This will delete all job data. Intended for testing only.
+	 *
+	 * @returns A Promise that resolves when reinitialization is complete
+	 */
 	async resetHard(): Promise<void> {
 		return await this.#initializeOnce(true);
 	}
 
-	/** Will remove related tables. */
+	/**
+	 * Removes all database tables created by Steve.
+	 *
+	 * **Warning:** This will permanently delete all job data and schema.
+	 *
+	 * @returns A Promise that resolves when uninstallation is complete
+	 */
 	async uninstall(): Promise<void> {
 		return await _uninstall(this.#context);
 	}
 
-	/** Will execute given callback only when exactly jobUid is done */
-	onDoneFor(jobUid: string, cb: (job: Job) => void) {
+	/**
+	 * Registers a callback for when a specific job completes.
+	 *
+	 * The callback is executed once when the job with the given UID
+	 * reaches a final state (completed or failed).
+	 *
+	 * @param jobUid - The unique identifier of the job to watch
+	 * @param cb - Callback function to execute on completion
+	 */
+	onDoneFor(jobUid: string, cb: (job: Job) => void): void {
 		if (!this.#onDoneCallbacks.has(jobUid)) {
 			this.#onDoneCallbacks.set(jobUid, new Set());
 		}
 		this.#onDoneCallbacks.get(jobUid)?.add(cb);
 	}
 
-	/** Will execute given callback only when exactly jobUid executed an attempt */
-	onAttemptFor(jobUid: string, cb: (job: Job) => void) {
+	/**
+	 * Registers a callback for each attempt of a specific job.
+	 *
+	 * The callback is executed on each attempt of the job with the given UID.
+	 *
+	 * @param jobUid - The unique identifier of the job to watch
+	 * @param cb - Callback function to execute on each attempt
+	 */
+	onAttemptFor(jobUid: string, cb: (job: Job) => void): void {
 		if (!this.#onAttemptCallbacks.has(jobUid)) {
 			this.#onAttemptCallbacks.set(jobUid, new Set());
 		}
 		this.#onAttemptCallbacks.get(jobUid)?.add(cb);
 	}
 
-	/** Subscribe callback to any processed (done) job, which is either success or failure */
+	/**
+	 * Subscribes to job completion events for specific job types.
+	 *
+	 * The callback is executed when any job of the specified type(s) completes
+	 * (either successfully or with failure after exhausting retries).
+	 *
+	 * @param type - Job type or array of types to subscribe to
+	 * @param cb - Callback function to execute on job completion
+	 * @param skipIfExists - Skip if callback already registered (default: true)
+	 * @returns Unsubscribe function to remove the listener
+	 *
+	 * @example
+	 * ```typescript
+	 * const unsub = jobs.onDone("email", (job) => {
+	 *   if (job.status === "completed") {
+	 *     console.log("Email sent successfully");
+	 *   }
+	 * });
+	 *
+	 * // Later: remove the listener
+	 * unsub();
+	 * ```
+	 */
 	onDone(
 		type: string | string[],
 		cb: (job: Job) => void,
-		skipIfExists = true
+		skipIfExists: boolean = true
 	): Unsubscriber {
 		return this.#onEvent(this.#pubsubDone, type, cb, skipIfExists);
 	}
 
-	/** Subscribe callback to every attempt */
+	/**
+	 * Subscribes to job attempt events for specific job types.
+	 *
+	 * The callback is executed on each attempt of jobs with the specified type(s).
+	 * This includes both the start and end of each attempt.
+	 *
+	 * @param type - Job type or array of types to subscribe to
+	 * @param cb - Callback function to execute on each attempt
+	 * @param skipIfExists - Skip if callback already registered (default: true)
+	 * @returns Unsubscribe function to remove the listener
+	 *
+	 * @example
+	 * ```typescript
+	 * jobs.onAttempt("email", (job) => {
+	 *   console.log(`Attempt ${job.attempts} - Status: ${job.status}`);
+	 * });
+	 * ```
+	 */
 	onAttempt(
 		type: string | string[],
 		cb: (job: Job) => void,
-		skipIfExists = true
+		skipIfExists: boolean = true
 	): Unsubscriber {
 		return this.#onEvent(this.#pubsubAttempt, type, cb, skipIfExists);
 	}
@@ -552,23 +881,38 @@ export class Jobs {
 		return () => unsubs.forEach((u) => u());
 	}
 
-	/** Helper to unsub all listeners. Used in tests. */
+	/**
+	 * Removes all event listeners.
+	 *
+	 * Primarily used in tests to clean up between test cases.
+	 */
 	unsubscribeAll(): void {
 		this.#pubsubAttempt.unsubscribeAll();
 		this.#pubsubDone.unsubscribeAll();
 	}
 
-	/** Get current database health status (returns null if health monitoring is not enabled) */
+	/**
+	 * Gets the current database health status.
+	 *
+	 * @returns The last health check status, or `null` if monitoring is not enabled
+	 */
 	getDbHealth(): DbHealthStatus | null {
 		return this.#healthMonitor?.getLastStatus() ?? null;
 	}
 
-	/** Manually check database health */
+	/**
+	 * Manually triggers a database health check.
+	 *
+	 * @returns The current health status
+	 */
 	async checkDbHealth(): Promise<DbHealthStatus> {
 		return await checkDbHealth(this.#db, this.#logger);
 	}
 
-	/** For internal debugging */
+	/**
+	 * Dumps internal state for debugging purposes.
+	 * @internal
+	 */
 	__debugDump(): {
 		pubsubAttempt: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
 		pubsubDone: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
@@ -585,7 +929,10 @@ export class Jobs {
 		};
 	}
 
-	/** For manual hackings (used in tests). */
+	/**
+	 * Returns raw SQL for schema operations.
+	 * @internal
+	 */
 	static __schema(tablePrefix: string = ""): {
 		drop: string;
 		create: string;
