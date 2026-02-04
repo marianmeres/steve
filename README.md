@@ -211,3 +211,6 @@ deno task example
 
 Once deps are installed and server is running, just visit http://localhost:8000.
 
+## License
+
+[MIT](LICENSE)

@@ -1,11 +1,16 @@
-# Agent Context: @marianmeres/steve
+# @marianmeres/steve — Agent Guide
+
+## Quick Reference
+
+- **Stack**: Deno/Node.js, PostgreSQL, pg driver
+- **Run**: `deno task example` | **Test**: `deno test -A --env-file` | **Build**: `deno task npm:build`
 
 ## Package Overview
 
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
 - **Runtime**: Deno and Node.js
-- **Version**: 1.9.3
+- **Version**: 1.9.5
 - **License**: MIT
 
 ## Purpose
@@ -43,6 +48,12 @@ src/
         ├── pg-quote.ts        # SQL escaping
         └── with-timeout.ts    # Timeout wrapper
 ```
+
+## Before Making Changes
+
+- [ ] Check existing patterns in `src/steve/job/` for job operations
+- [ ] Run tests: `deno test -A --env-file`
+- [ ] Ensure PostgreSQL test database is available
 
 ## Public API Exports
 
