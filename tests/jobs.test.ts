@@ -346,7 +346,7 @@ testsRunner([
 				{},
 				// schedule 200 ms in the future
 				{ run_at: new Date(Date.now() + 200) },
-				() => (jobDone = true)
+				() => { jobDone = true; }
 			);
 			// console.log(job);
 

@@ -55,7 +55,7 @@ const jobs = new Jobs({
         // ...
     },
     // how long should the worker be idle before trying to claim a new job
-    pollIntervalMs, // default 1_000
+    pollTimeoutMs, // default 1_000
     // optional: enable database retry on transient failures (default: disabled)
     dbRetry: true, // or provide custom options
     // optional: enable database health monitoring (default: disabled)

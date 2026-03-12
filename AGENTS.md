@@ -10,7 +10,7 @@
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
 - **Runtime**: Deno and Node.js
-- **Version**: 1.9.5
+- **Version**: 1.9.6
 - **License**: MIT
 
 ## Purpose
@@ -70,15 +70,17 @@ From `src/mod.ts`:
 - `Job` - Job row representation
 - `JobAttempt` - Attempt log entry
 - `JobCreateOptions` - Options for creating jobs
+- `JobCreateDTO` - DTO extending JobCreateOptions with type and payload
 - `JobsOptions` - Jobs constructor options
 - `JobContext` - Internal context (exported but internal use)
+- `HealthPreviewRow` - Row returned by health preview query
 - `DbRetryOptions` - Retry configuration
 - `DbHealthStatus` - Health check result
 
 ### Types
-- `JobHandler` - `(job: Job) => any | Promise<any>`
+- `JobHandler` - `(job: Job) => unknown | Promise<unknown>`
 - `JobHandlersMap` - `Record<string, JobHandler | null | undefined>`
-- `JobAwareFn` - Callback for job events
+- `JobAwareFn` - `(job: Job) => void | Promise<void>`
 
 ### Constants
 - `JOB_STATUS` - `{ PENDING, RUNNING, COMPLETED, FAILED, EXPIRED }`
@@ -97,7 +99,7 @@ Two tables are created (with configurable prefix):
 | type | VARCHAR | Job type for routing |
 | payload | JSONB | Custom job data |
 | result | JSONB | Handler return value |
-| status | VARCHAR | pending/running/completed/failed/expired |
+| status | VARCHAR | pending/running/completed/failed (expired via cleanup) |
 | attempts | INT | Attempt count |
 | max_attempts | INT | Max retry attempts |
 | max_attempt_duration_ms | INT | Timeout per attempt |
@@ -137,8 +139,8 @@ Two tables are created (with configurable prefix):
 PENDING → RUNNING → COMPLETED
                   ↘ PENDING (retry)
                   ↘ FAILED (max attempts reached)
-                  ↘ EXPIRED (running too long)
 ```
+Note: `expired` status exists in the DB (set by `cleanup()`) but is not part of the `Job` TypeScript type union.
 
 ### Graceful Shutdown
 - SIGTERM handler by default (configurable)

@@ -15,6 +15,8 @@ Complete API documentation for `@marianmeres/steve`.
   - [JobsOptions](#jobsoptions)
   - [JobHandler](#jobhandler)
   - [JobAwareFn](#jobawarefn)
+  - [JobCreateDTO](#jobcreatedto)
+  - [HealthPreviewRow](#healthpreviewrow)
 - [Constants](#constants)
   - [JOB_STATUS](#job_status)
   - [ATTEMPT_STATUS](#attempt_status)
@@ -94,7 +96,7 @@ Gracefully stops all running job processors. Waits for currently executing jobs 
 ```typescript
 async create(
   type: string,
-  payload?: Record<string, any>,
+  payload?: Record<string, unknown>,
   options?: JobCreateOptions,
   onDone?: JobAwareFn
 ): Promise<Job>
@@ -311,7 +313,7 @@ Performs maintenance cleanup tasks. Marks jobs that have been running too long a
 #### healthPreview
 
 ```typescript
-async healthPreview(sinceMinutesAgo?: number): Promise<any[]>
+async healthPreview(sinceMinutesAgo?: number): Promise<HealthPreviewRow[]>
 ```
 
 Collects job statistics for health monitoring.
@@ -398,9 +400,9 @@ interface Job {
   id: number;                    // Internal database ID
   uid: string;                   // Unique identifier (UUID)
   type: string;                  // Job type identifier
-  payload: Record<string, any>;  // Custom payload data
-  result: null | undefined | Record<string, any>;  // Handler result
-  status: "pending" | "running" | "completed" | "failed" | "expired";
+  payload: Record<string, unknown>;  // Custom payload data
+  result: null | undefined | Record<string, unknown>;  // Handler result
+  status: "pending" | "running" | "completed" | "failed";
   attempts: number;              // Number of attempts made
   max_attempts: number;          // Maximum retry attempts
   max_attempt_duration_ms: number;  // Max attempt duration (0 = no limit)
@@ -412,6 +414,8 @@ interface Job {
   backoff_strategy: "none" | "exp";
 }
 ```
+
+Note: The `expired` status exists in the database (set by `cleanup()`) but is not part of the TypeScript type union.
 
 ---
 
@@ -428,7 +432,7 @@ interface JobAttempt {
   completed_at: Date;
   status: "success" | "error";
   error_message: null | string;
-  error_details: null | Record<string, any>;  // Includes stack trace
+  error_details: null | Record<string, unknown>;  // Includes stack trace
 }
 ```
 
@@ -476,7 +480,7 @@ interface JobsOptions {
 ### JobHandler
 
 ```typescript
-type JobHandler = (job: Job) => any | Promise<any>;
+type JobHandler = (job: Job) => unknown | Promise<unknown>;
 ```
 
 A function that processes a job. The returned value is stored in the job's `result` field. Must throw an error to indicate failure.
@@ -486,10 +490,37 @@ A function that processes a job. The returned value is stored in the job's `resu
 ### JobAwareFn
 
 ```typescript
-type JobAwareFn = (job: Job) => any | Promise<any>;
+type JobAwareFn = (job: Job) => void | Promise<void>;
 ```
 
 Callback function that receives a job. Used for event callbacks like `onDone` and `onAttempt`.
+
+---
+
+### JobCreateDTO
+
+Data transfer object for creating a new job. Extends `JobCreateOptions` with required type and payload.
+
+```typescript
+interface JobCreateDTO extends JobCreateOptions {
+  type: string;
+  payload: Record<string, unknown>;
+}
+```
+
+---
+
+### HealthPreviewRow
+
+Row returned by the health preview query.
+
+```typescript
+interface HealthPreviewRow {
+  status: string;
+  count: string;
+  avg_duration_seconds: string | null;
+}
+```
 
 ---
 
