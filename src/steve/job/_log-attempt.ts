@@ -45,7 +45,7 @@ export async function _logAttemptError(
 	context: JobContext,
 	attemptId: number,
 	errMessage: string,
-	errDetails: any
+	errDetails: Record<string, string> | null
 ): Promise<void> {
 	const { db, tableNames } = context;
 	const { tableAttempts } = tableNames;

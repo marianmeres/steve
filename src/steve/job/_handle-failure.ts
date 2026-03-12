@@ -10,18 +10,21 @@ export async function _handleJobFailure(
 	context: JobContext,
 	job: Job,
 	attemptId: number,
-	error: any
+	error: unknown
 ): Promise<Job> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
 	await db.query("BEGIN");
 
+	const errMessage = error instanceof Error ? error.message : String(error);
+	const errStack = error instanceof Error && error.stack ? { stack: error.stack } : null;
+
 	await _logAttemptError(
 		context,
 		attemptId,
-		error?.message ?? `${error}`,
-		error?.stack ? { stack: error.stack } : null
+		errMessage,
+		errStack
 	);
 
 	let failed = null;

@@ -30,6 +30,6 @@ export function sleep(
 		__timeout_ref__.id = setTimeout(() => {
 			clearTimeout(__timeout_ref__.id);
 			resolve(undefined);
-		}, timeout) as any;
+		}, timeout) as unknown as number;
 	});
 }

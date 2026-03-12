@@ -1,5 +1,5 @@
 import { createClog, type Logger } from "@marianmeres/clog";
-import { createPubSub, type Unsubscriber } from "@marianmeres/pubsub";
+import { createPubSub, type Subscriber, type Unsubscriber } from "@marianmeres/pubsub";
 import process from "node:process";
 import type pg from "pg";
 import { _claimNextJob } from "./job/_claim-next.ts";
@@ -72,7 +72,7 @@ export const BACKOFF_STRATEGY = {
  * @param job - The job to process
  * @returns The result of the job processing, or a Promise resolving to the result
  */
-export type JobHandler = (job: Job) => any | Promise<any>;
+export type JobHandler = (job: Job) => unknown | Promise<unknown>;
 
 /**
  * Map of job handlers keyed by job type.
@@ -89,7 +89,7 @@ export type JobHandlersMap = Record<string, JobHandler | null | undefined>;
  * @param job - The job that triggered the callback
  * @returns Any value or a Promise
  */
-export type JobAwareFn = (job: Job) => any | Promise<any>;
+export type JobAwareFn = (job: Job) => void | Promise<void>;
 
 /**
  * Internal context passed to job utilities.
@@ -129,9 +129,9 @@ export interface Job {
 	/** Job type identifier used to route to the appropriate handler */
 	type: string;
 	/** Custom payload data passed when creating the job */
-	payload: Record<string, any>;
+	payload: Record<string, unknown>;
 	/** Result returned by the job handler on successful completion */
-	result: null | undefined | Record<string, any>;
+	result: null | undefined | Record<string, unknown>;
 	/** Current status of the job */
 	status:
 		| typeof JOB_STATUS.PENDING
@@ -180,7 +180,7 @@ export interface JobAttempt {
 	/** Error message if the attempt failed */
 	error_message: null | string;
 	/** Additional error details including stack trace */
-	error_details: null | Record<"stack" | string, any>;
+	error_details: null | Record<string, unknown>;
 }
 
 /**
@@ -208,7 +208,7 @@ export interface JobCreateDTO extends JobCreateOptions {
 	/** Job type identifier used to route to the appropriate handler */
 	type: string;
 	/** Custom payload data for the job */
-	payload: Record<string, any>;
+	payload: Record<string, unknown>;
 }
 
 /**
@@ -253,6 +253,15 @@ export interface JobsOptions {
 				/** Callback when database recovers */
 				onHealthy?: (status: DbHealthStatus) => void;
 		  };
+}
+
+/**
+ * Row returned by the health preview query.
+ */
+export interface HealthPreviewRow {
+	status: string;
+	count: string;
+	avg_duration_seconds: string | null;
 }
 
 /**
@@ -439,11 +448,12 @@ export class Jobs {
 					}
 					this.#jobClaimErrorCounter = 0;
 				}
-			} catch (e: any) {
+			} catch (e: unknown) {
 				// a little dance to prevent log spam... only allow `limit` consecutive error reports
 				this.#jobClaimErrorCounter++;
 				if (this.#jobClaimErrorCounter < limit) {
-					this.#logger?.error?.(`Job claim: ${e?.stack ?? e}`);
+					const msg = e instanceof Error ? e.stack ?? e.message : String(e);
+					this.#logger?.error?.(`Job claim: ${msg}`);
 				} else if (this.#jobClaimErrorCounter === limit) {
 					this.#logger?.debug?.(`Job claim error reporting MUTED...`);
 				} // else swallow
@@ -602,7 +612,7 @@ export class Jobs {
 	 */
 	async create(
 		type: string,
-		payload: Record<string, any> = {},
+		payload: Record<string, unknown> = {},
 		options?: JobCreateOptions,
 		onDone?: JobAwareFn
 	): Promise<Job> {
@@ -651,7 +661,7 @@ export class Jobs {
 	): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
 		await this.#initializeOnce();
 		const job = await _find(this.#context, uid);
-		let attempts: null | any[] = null;
+		let attempts: null | JobAttempt[] = null;
 
 		if (job && withAttempts) {
 			attempts = await _logAttemptFetchAll(this.#context, job.id);
@@ -731,7 +741,7 @@ export class Jobs {
 	 * // Returns counts and avg durations per status
 	 * ```
 	 */
-	async healthPreview(sinceMinutesAgo: number = 60): Promise<any[]> {
+	async healthPreview(sinceMinutesAgo: number = 60): Promise<HealthPreviewRow[]> {
 		await this.#initializeOnce();
 		return await _healthPreview(this.#context, sinceMinutesAgo);
 	}
@@ -854,7 +864,7 @@ export class Jobs {
 		skipIfExists: boolean
 	): Unsubscriber {
 		const types = Array.isArray(type) ? type : [type];
-		const unsubs: any[] = [];
+		const unsubs: (() => void)[] = [];
 
 		// wrap callback to make sure it will not kill the server on unhandled error
 		// (the onEvent handlers will be triggered outside of typical webserver request handlers)
@@ -867,7 +877,7 @@ export class Jobs {
 				}
 			});
 		}
-		const wrapped = Jobs.#onEventWraps.get(cb) as any;
+		const wrapped = Jobs.#onEventWraps.get(cb) as Subscriber;
 
 		types.forEach((t) => {
 			if (!skipIfExists || !pubsub.isSubscribed(t, wrapped)) {

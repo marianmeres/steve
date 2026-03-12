@@ -9,11 +9,13 @@ export function withTimeout<T>(
 	fn: CallableFunction,
 	timeout: number = 1_000,
 	errMessage?: string
+	// deno-lint-ignore no-explicit-any -- args are pass-through to CallableFunction
 ): (...args: any[]) => Promise<T> {
+	// deno-lint-ignore no-explicit-any -- args are pass-through to CallableFunction
 	return (...args: any[]) => {
 		const _promise = fn(...args);
 
-		let _timeoutId: any;
+		let _timeoutId: ReturnType<typeof setTimeout>;
 		const _clock = new Promise((_, reject) => {
 			_timeoutId = setTimeout(() => {
 				reject(new TimeoutError(errMessage || `Timed out after ${timeout} ms`));

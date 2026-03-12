@@ -6,20 +6,21 @@ export async function _handleJobSuccess(
 	context: JobContext,
 	jobId: number,
 	attemptId: number,
-	result: any
+	result: unknown
 ): Promise<Job> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
 	await db.query("BEGIN");
 
+	let serialized: string | Record<string, string>;
 	try {
-		result = JSON.stringify(result ?? {});
+		serialized = JSON.stringify(result ?? {});
 	} catch (e) {
-		result = {
+		serialized = JSON.stringify({
 			message: `Unable to serialize completed job result`,
 			details: `${e}`,
-		};
+		});
 	}
 
 	const job = (
@@ -31,7 +32,7 @@ export async function _handleJobSuccess(
 				result = $1
 			WHERE id = $2
 			RETURNING *`,
-			[result, jobId]
+			[serialized, jobId]
 		)
 	).rows[0];
 

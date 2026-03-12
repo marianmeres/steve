@@ -15,7 +15,7 @@ export async function _create(
 		max_attempts: true,
 		backoff_strategy: true,
 		max_attempt_duration_ms: true,
-		run_at: (v: any) => (v ? new Date(v).toISOString() : null),
+		run_at: (v: unknown) => (v ? new Date(v as string | number | Date).toISOString() : null),
 	});
 
 	const sql = `INSERT INTO ${tableJobs} (${keys}) VALUES (${placeholders}) RETURNING *`;

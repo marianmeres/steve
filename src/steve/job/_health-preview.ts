@@ -1,10 +1,10 @@
-import type { JobContext } from "../jobs.ts";
+import type { HealthPreviewRow, JobContext } from "../jobs.ts";
 
 /** Will collect some basic stats about the jobs since `sinceHours` */
 export async function _healthPreview(
 	context: JobContext,
 	sinceMinutesAgo = 60
-): Promise<any[]> {
+): Promise<HealthPreviewRow[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
