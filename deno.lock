@@ -2,13 +2,14 @@
   "version": "5",
   "specifiers": {
     "jsr:@marianmeres/batch@^1.2.0": "1.2.0",
-    "jsr:@marianmeres/clog@^3.15.3": "3.17.0",
-    "jsr:@marianmeres/clog@^3.17.0": "3.17.0",
+    "jsr:@marianmeres/clog@^3.15.3": "3.17.1",
+    "jsr:@marianmeres/clog@^3.17.0": "3.17.1",
+    "jsr:@marianmeres/clog@^3.17.1": "3.17.1",
     "jsr:@marianmeres/data-to-sql-params@^1.6.0": "1.6.0",
     "jsr:@marianmeres/demino@^1.8.0": "1.8.0",
     "jsr:@marianmeres/http-utils@^2.6.0": "2.6.0",
     "jsr:@marianmeres/midware@^1.5.0": "1.5.0",
-    "jsr:@marianmeres/npmbuild@^1.12.0": "1.12.0",
+    "jsr:@marianmeres/npmbuild@^1.13.0": "1.13.0",
     "jsr:@marianmeres/parse-boolean@^2.1.0": "2.1.0",
     "jsr:@marianmeres/pubsub@3": "3.0.0",
     "jsr:@marianmeres/pubsub@^2.4.6": "2.4.6",
@@ -40,8 +41,8 @@
         "jsr:@marianmeres/pubsub@^2.4.6"
       ]
     },
-    "@marianmeres/clog@3.17.0": {
-      "integrity": "c8cc70dd07e7de851fc41f92563ddc4e55c10c34bc3b42351df5ed14908ac8cd",
+    "@marianmeres/clog@3.17.1": {
+      "integrity": "f899209530ddc2e79f84188c740171cde07e9bbfc30c4d3cff606aa126ebe29a",
       "dependencies": [
         "jsr:@marianmeres/batch"
       ]
@@ -70,8 +71,8 @@
     "@marianmeres/midware@1.5.0": {
       "integrity": "0d4b6efbb69a4c75026e2f00c2c69760c8029f402213db1da3dfe0fae4e58f72"
     },
-    "@marianmeres/npmbuild@1.12.0": {
-      "integrity": "17561243fdd772580a3bcc46d79c37f2d99af4146d3261a716a4180560c12e6e",
+    "@marianmeres/npmbuild@1.13.0": {
+      "integrity": "6283bc3fce312cf8a15fb1b979bc7e974fb99849ae0b449aa5a4837e4e7bb635",
       "dependencies": [
         "jsr:@std/collections",
         "jsr:@std/fs",
@@ -252,10 +253,10 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@marianmeres/clog@^3.17.0",
+      "jsr:@marianmeres/clog@^3.17.1",
       "jsr:@marianmeres/data-to-sql-params@^1.6.0",
       "jsr:@marianmeres/demino@^1.8.0",
-      "jsr:@marianmeres/npmbuild@^1.12.0",
+      "jsr:@marianmeres/npmbuild@^1.13.0",
       "jsr:@marianmeres/parse-boolean@^2.1.0",
       "jsr:@marianmeres/pubsub@3",
       "jsr:@std/assert@^1.0.19",
