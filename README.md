@@ -7,8 +7,10 @@
 PostgreSQL based jobs processing manager.
 
 Supports concurrent multiple "workers" (job processors), job scheduling,
-configurable retry logic, configurable max allowed duration per attempt, configurable backoff
-strategies, database resilience with automatic retries, health monitoring, detailed logging and more...
+configurable retry logic (with capped exponential backoff), configurable max allowed duration
+per attempt (with cooperative `AbortSignal`), database resilience with automatic retries and
+real single-connection transactions, health monitoring, automatic cleanup of crashed-worker
+leftovers, detailed logging and more...
 
 Uses [node-postgres](https://node-postgres.com/) internally.
 
@@ -44,35 +46,41 @@ const jobs = new Jobs({
     // pg.Pool or pg.Client
     db,
     // global job handler for all jobs
-    jobHandler: (job: Job) => {
+    jobHandler: (job: Job, signal?: AbortSignal) => {
         // Do the work...
         // Must throw on error.
         // Returned data will be available as the `result` prop.
+        // The AbortSignal fires when `max_attempt_duration_ms` elapses — respect it
+        // (e.g. pass to `fetch`) so you can bail out early on timeout.
     },
     // or, jobHandlers by type map
     jobHandlers: {
         my_job_type: (job: Job) => { /*...*/ },
         // ...
     },
-    // how long should the worker be idle before trying to claim a new job
+    // how long the worker idles before polling for a new job (±25% jitter applied)
     pollTimeoutMs, // default 1_000
     // optional: enable database retry on transient failures (default: disabled)
     dbRetry: true, // or provide custom options
     // optional: enable database health monitoring (default: disabled)
     dbHealthCheck: true, // or provide custom options
+    // optional: periodic reaping of crashed-worker leftovers (default: disabled)
+    autoCleanup: true, // or { intervalMs, maxAllowedRunDurationMinutes }
 });
 
 // later, as new job types are needed, just re/set the handler
 jobs.setHandler('my_type', myHandler);
 jobs.setHandler('my_type', null); // this removes the `my_type` handler altogether
 
-// kicks off the job processing (with, let's say, 2 concurrent processors)
-jobs.start(2);
+// kicks off the job processing (with, let's say, 2 concurrent processors).
+// Throws on initialization failure; idempotent on repeat calls while already running.
+await jobs.start(2);
 
 // now the system is ready to handle any incoming jobs...
 
-// stops processing (while gracefully finishes all currently running jobs)
-jobs.stop();
+// stops processing (while gracefully finishes all currently running jobs, stops
+// the health monitor/auto-cleanup and removes the SIGTERM listener)
+await jobs.stop();
 ```
 
 ## Creating a job
@@ -104,19 +112,35 @@ Both methods below return `unsubscribe` function.
 
 ```typescript
 jobs.onDone('my_job_type', (job: Job) => {
-    // job is either completed or failed... see `job.status`
-    // note that status `failed` is only set once 
-    // max_attempts retries were reached
+    // Fires on terminal state: `completed`, `failed` (all retries exhausted),
+    // or `expired` (worker crashed and the reaper picked it up).
 });
 
 jobs.onAttempt('my_job_type', (job: Job) => {
-    // maybe running, completed, maybe failed, maybe pending (planned retry)... see `job.status`
+    // Fires on every state transition: `running`, `completed`, `failed`, or `pending` (planned retry).
 });
 ```
 
 Note that the `onAttempt` is fired twice for each "physical" attempt - once just when 
 the job is claimed and is starting the execution (with status `running`) and once when 
 the execution is done (with one of the `completed`, `failed` or `pending`).
+
+## Automatic cleanup of stuck jobs
+
+If a worker process crashes mid-job, the row stays in `running` until it is explicitly
+reaped. Enable `autoCleanup` to have Steve do this periodically, or call
+`jobs.cleanup()` manually. Reaped jobs are marked as `expired`, have `completed_at` set,
+and fire `onDone` so consumers can react.
+
+```typescript
+new Jobs({
+    db,
+    autoCleanup: {
+        intervalMs: 60_000,                   // check every minute
+        maxAllowedRunDurationMinutes: 5,      // "stuck" threshold
+    },
+});
+```
 
 ## Examining the job manually
 
@@ -210,6 +234,31 @@ deno task example
 ```
 
 Once deps are installed and server is running, just visit http://localhost:8000.
+
+## Upgrading from 1.x to 2.0
+
+Version 2.0.0 fixes several correctness and security bugs. Most users won't
+need code changes, but a few behaviors differ:
+
+- **`Jobs.start()` now throws on initialization failure** (previously it logged
+  and silently returned). Wrap in try/catch if you relied on the swallowed error.
+- **`Jobs.start()` is idempotent** — calling it twice no longer doubles the
+  processor count. Re-start via `stop()` then `start()`.
+- **`jobs.cleanup()` returns `number`** (count of reaped jobs) instead of
+  `void`, and now fires `onDone` events for each expired job. If you had listeners
+  that assumed only completed/failed statuses reach onDone, branch on
+  `job.status === "expired"` as well.
+- **`Job.status` TypeScript union now includes `"expired"`** (was runtime-only
+  previously). This is a widening; `switch` statements without an `expired` arm
+  still compile but you should add one.
+- **`JobHandler` signature adds an optional `signal?: AbortSignal`** as the
+  second argument. Existing handlers that take only `(job)` continue to work.
+- **Exponential backoff is now capped at 1 hour.** If you deliberately relied
+  on multi-day backoff at high attempt counts, you'll need a custom scheduling
+  strategy.
+- **`started_at` now records the FIRST attempt start, not the latest.** If you
+  queried `started_at` expecting the current retry's start, switch to
+  `updated_at` or to the latest attempt log row.
 
 ## License
 

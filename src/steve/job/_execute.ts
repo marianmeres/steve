@@ -14,7 +14,10 @@ export async function _executeJob(
 	job: Job,
 	handler: JobHandler
 ) {
-	const attemptId = await _logAttemptStart(context, job);
+	const { tableNames } = context;
+	const attemptId = await context.withRetry(() =>
+		_logAttemptStart(context.db, tableNames.tableAttempts, job)
+	);
 
 	// we also need to publish "running" state as attempt (so we can track every state change effectively)
 	context.pubsubAttempt.publish(job.type, job);
@@ -22,31 +25,33 @@ export async function _executeJob(
 	context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(job));
 
 	try {
-		let __handler = () => handler(job);
+		let __handler: () => Promise<unknown>;
 
-		// are we on the clock? (zero means no max limit)
 		if (job.max_attempt_duration_ms > 0) {
 			__handler = withTimeout(
-				__handler,
+				(signal) => handler(job, signal),
 				job.max_attempt_duration_ms,
 				"Execution timed out"
 			);
+		} else {
+			__handler = async () => handler(job);
 		}
 
 		const result = await __handler();
 
-		const completedJob = await _handleJobSuccess(
-			context,
-			job.id,
-			attemptId,
-			result
-		); // TX
+		// Finalization is retry-wrapped — transient DB blips during the write-path
+		// should not leave the job inconsistent.
+		const completedJob = await context.withRetry(() =>
+			_handleJobSuccess(context, job.id, attemptId, result)
+		);
 
 		context.pubsubAttempt.publish(job.type, completedJob);
 		context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(completedJob));
 		_execOnDone(context, completedJob);
 	} catch (error) {
-		const failedJob = await _handleJobFailure(context, job, attemptId, error); // TX
+		const failedJob = await context.withRetry(() =>
+			_handleJobFailure(context, job, attemptId, error)
+		);
 		// publish every failed attempt (which may be a retry)
 		context.pubsubAttempt.publish(job.type, failedJob);
 		context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(failedJob));

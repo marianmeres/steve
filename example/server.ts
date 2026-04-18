@@ -59,12 +59,16 @@ async function main() {
 
 	app.get("/jobs", (r, _i, c) => {
 		const q = Object.fromEntries(new URL(r.url).searchParams.entries());
-		return c.locals.jobs.fetchAll(null, q);
+		return (c.locals.jobs as Jobs).fetchAll(null, q);
 	});
 
-	app.get("/job/[uid]", (_r, _i, c) => c.locals.jobs.find(null, c.params.uid));
+	app.get("/job/[uid]", (_r, _i, c) =>
+		(c.locals.jobs as Jobs).find(c.params.uid)
+	);
 
-	app.get("/health", (_r, _i, c) => c.locals.jobs.healthPreview(15));
+	app.get("/health", (_r, _i, c) =>
+		(c.locals.jobs as Jobs).healthPreview(15)
+	);
 
 	Deno.serve(app);
 }

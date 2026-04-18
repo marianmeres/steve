@@ -27,9 +27,6 @@ export function sleep(
 	__timeout_ref__: { id: number } = { id: -1 }
 ): Promise<void> {
 	return new Promise((resolve) => {
-		__timeout_ref__.id = setTimeout(() => {
-			clearTimeout(__timeout_ref__.id);
-			resolve(undefined);
-		}, timeout) as unknown as number;
+		__timeout_ref__.id = setTimeout(() => resolve(undefined), timeout) as unknown as number;
 	});
 }

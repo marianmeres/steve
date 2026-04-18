@@ -56,7 +56,7 @@ export const ATTEMPT_STATUS = {
  * Available backoff strategies for retry logic.
  *
  * - `NONE` - No delay between retries
- * - `EXP` - Exponential backoff with 2^attempts seconds delay
+ * - `EXP` - Exponential backoff with 2^attempts seconds delay (capped at 1 hour)
  */
 export const BACKOFF_STRATEGY = {
 	NONE: "none",
@@ -70,9 +70,15 @@ export const BACKOFF_STRATEGY = {
  * the job's `result` field. Must throw an error to indicate failure.
  *
  * @param job - The job to process
- * @returns The result of the job processing, or a Promise resolving to the result
+ * @param signal - An AbortSignal that aborts when `max_attempt_duration_ms` elapses.
+ *                Handlers should respect this signal for best behavior under timeouts;
+ *                handlers that ignore it will continue to run in the background even
+ *                after the attempt is recorded as timed-out.
  */
-export type JobHandler = (job: Job) => unknown | Promise<unknown>;
+export type JobHandler = (
+	job: Job,
+	signal?: AbortSignal
+) => unknown | Promise<unknown>;
 
 /**
  * Map of job handlers keyed by job type.
@@ -113,6 +119,8 @@ export interface JobContext {
 	onDoneCallbacks: Map<string, Set<JobAwareFn>>;
 	/** Callbacks for specific job UID attempts */
 	onAttemptCallbacks: Map<string, Set<JobAwareFn>>;
+	/** Wraps a DB operation with the instance's configured retry policy (no-op when disabled) */
+	withRetry: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -137,7 +145,8 @@ export interface Job {
 		| typeof JOB_STATUS.PENDING
 		| typeof JOB_STATUS.RUNNING
 		| typeof JOB_STATUS.COMPLETED
-		| typeof JOB_STATUS.FAILED;
+		| typeof JOB_STATUS.FAILED
+		| typeof JOB_STATUS.EXPIRED;
 	/** Number of execution attempts made */
 	attempts: number;
 	/** Maximum number of attempts before marking as failed */
@@ -148,9 +157,9 @@ export interface Job {
 	created_at: Date;
 	/** Timestamp when the job was last updated */
 	updated_at: Date;
-	/** Timestamp when the job started execution */
+	/** Timestamp when the FIRST attempt started (preserved across retries) */
 	started_at: Date;
-	/** Timestamp when the job completed (success or failure) */
+	/** Timestamp when the job completed (success, failure, or expiration) */
 	completed_at: Date;
 	/** Scheduled time for the job to run (for delayed jobs) */
 	run_at: Date;
@@ -212,6 +221,22 @@ export interface JobCreateDTO extends JobCreateOptions {
 }
 
 /**
+ * Configuration for the periodic in-process "expired job" reaper.
+ *
+ * When enabled, Steve automatically marks jobs stuck in `running` for longer than
+ * `maxAllowedRunDurationMinutes` as `expired` and publishes `onDone` for them.
+ *
+ * Even without this, a worker crash will leave rows in `running`; pass
+ * `autoCleanup: true` to recover automatically, or call `jobs.cleanup()` manually.
+ */
+export interface AutoCleanupOptions {
+	/** Check interval in milliseconds (default: 60000) */
+	intervalMs?: number;
+	/** Max duration a job may stay in `running` before being reaped (default: 5) */
+	maxAllowedRunDurationMinutes?: number;
+}
+
+/**
  * Configuration options for the Jobs manager.
  *
  * @example
@@ -222,6 +247,7 @@ export interface JobCreateDTO extends JobCreateOptions {
  *   pollTimeoutMs: 2000,
  *   dbRetry: true,
  *   dbHealthCheck: true,
+ *   autoCleanup: true,
  * });
  * ```
  */
@@ -253,6 +279,8 @@ export interface JobsOptions {
 				/** Callback when database recovers */
 				onHealthy?: (status: DbHealthStatus) => void;
 		  };
+	/** Enable periodic cleanup of stuck-in-`running` jobs (true = defaults, or provide options) */
+	autoCleanup?: boolean | AutoCleanupOptions;
 }
 
 /**
@@ -325,12 +353,16 @@ export class Jobs {
 	#context: JobContext;
 
 	#isShuttingDown = false;
+	#isRunning = false;
 	#wasInitialized = false;
-	#activeJobs = new Set();
+	#activeJobs: Set<number> = new Set();
 	#jobProcessors: Promise<void>[] = [];
 
-	// event handlers try/catch wraps (they will be triggered outside of typical request handlers...)
-	static #onEventWraps = new Map<CallableFunction, CallableFunction>();
+	// Per-instance event wrapper registry: type → (user cb → error-wrapping cb).
+	// Scoped to the instance so multiple Jobs instances with shared callbacks don't
+	// stomp on each other, and scoped by type so multi-type subscribe+unsubscribe
+	// doesn't tear down unrelated subscriptions.
+	#onEventWraps: Map<string, Map<JobAwareFn, Subscriber>> = new Map();
 
 	// so we don't spam the log...
 	#jobClaimErrorCounter: number = 0;
@@ -338,6 +370,13 @@ export class Jobs {
 	// database retry and health monitoring
 	#dbRetryOptions: DbRetryOptions | null = null;
 	#healthMonitor: DbHealthMonitor | null = null;
+
+	// SIGTERM lifecycle — registered on start(), removed on stop() to avoid listener leaks
+	#sigtermHandler: (() => void) | null = null;
+
+	// Auto cleanup (reaper) lifecycle
+	#autoCleanupOptions: AutoCleanupOptions | null = null;
+	#autoCleanupTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: JobsOptions) {
 		const {
@@ -350,6 +389,7 @@ export class Jobs {
 			gracefulSigterm = true,
 			dbRetry,
 			dbHealthCheck,
+			autoCleanup,
 		} = options || {};
 
 		this.#db = db;
@@ -378,6 +418,12 @@ export class Jobs {
 			this.#healthMonitor = new DbHealthMonitor(this.#db, healthOptions);
 		}
 
+		// Setup auto-cleanup options
+		if (autoCleanup) {
+			this.#autoCleanupOptions =
+				autoCleanup === true ? {} : { ...autoCleanup };
+		}
+
 		this.#context = {
 			db: this.#db,
 			tableNames: tableNames(tablePrefix),
@@ -386,10 +432,11 @@ export class Jobs {
 			pubsubAttempt: this.#pubsubAttempt,
 			onDoneCallbacks: this.#onDoneCallbacks,
 			onAttemptCallbacks: this.#onAttemptCallbacks,
+			withRetry: <T>(fn: () => Promise<T>) => this.#withRetry(fn),
 		};
 	}
 
-	/** Wrapper for database operations with retry */
+	/** Wrapper for database operations with retry (no-op when retry is disabled). */
 	async #withRetry<T>(fn: () => Promise<T>): Promise<T> {
 		if (this.#dbRetryOptions) {
 			return await withDbRetry(fn, this.#dbRetryOptions);
@@ -399,23 +446,39 @@ export class Jobs {
 
 	async #initializeOnce(hard?: boolean | undefined) {
 		if (!this.#wasInitialized) {
-			await _initialize(this.#context, !!hard);
+			await this.#withRetry(() => _initialize(this.#context, !!hard));
 			this.#wasInitialized = true;
 			this.#logger?.debug?.(`System initialized${hard ? " (hard)" : ""} `);
-
-			if (this.gracefulSigterm) {
-				process.on("SIGTERM", async () => {
-					this.#logger?.debug?.(`SIGTERM detected...`);
-					await this.stop();
-					// not calling the exit here... this should be a responsibility of the consumer
-					// process.exit(0);
-				});
-			}
 		}
 	}
 
+	/** Registers the SIGTERM handler exactly once per start/stop cycle. */
+	#installSigtermHandler() {
+		if (!this.gracefulSigterm || this.#sigtermHandler) return;
+		this.#sigtermHandler = () => {
+			this.#logger?.debug?.(`SIGTERM detected...`);
+			// not calling process.exit here... that is the consumer's responsibility
+			void this.stop();
+		};
+		process.on("SIGTERM", this.#sigtermHandler);
+	}
+
+	#removeSigtermHandler() {
+		if (this.#sigtermHandler) {
+			process.off("SIGTERM", this.#sigtermHandler);
+			this.#sigtermHandler = null;
+		}
+	}
+
+	/** Returns a jittered poll interval (±25%) to avoid thundering-herd across workers. */
+	#jitteredPoll(): number {
+		if (this.pollTimeoutMs <= 0) return this.pollTimeoutMs;
+		const factor = 0.75 + Math.random() * 0.5;
+		return Math.max(1, Math.round(this.pollTimeoutMs * factor));
+	}
+
 	async #processJobs(processorId: string): Promise<void> {
-		const noopHandler = (_job: Job) => ({ noop: true });
+		const noopHandler: JobHandler = (_job: Job) => ({ noop: true });
 
 		// this is to prevent log spam... note that this is not used in a "job execution" failure,
 		// but only in "job claiming" failures, which should be mostly if db is unaccessible or similar...
@@ -439,7 +502,7 @@ export class Jobs {
 						this.#activeJobs.delete(job.id);
 					}
 				} else {
-					await sleep(this.pollTimeoutMs);
+					await sleep(this.#jitteredPoll());
 				}
 				//
 				if (this.#jobClaimErrorCounter) {
@@ -457,6 +520,9 @@ export class Jobs {
 				} else if (this.#jobClaimErrorCounter === limit) {
 					this.#logger?.debug?.(`Job claim error reporting MUTED...`);
 				} // else swallow
+
+				// back off a bit on claim errors so we don't hot-loop against a broken DB
+				await sleep(this.#jitteredPoll());
 			}
 		}
 
@@ -474,14 +540,40 @@ export class Jobs {
 		this.#logger?.debug?.(`Job processor "${processorId}" stopped`);
 	}
 
+	/** Fires the periodic reaper loop used when `autoCleanup` is enabled. */
+	#scheduleAutoCleanup() {
+		if (!this.#autoCleanupOptions || this.#isShuttingDown) return;
+		const { intervalMs = 60_000 } = this.#autoCleanupOptions;
+
+		this.#autoCleanupTimeoutId = setTimeout(async () => {
+			try {
+				await this.cleanup(
+					this.#autoCleanupOptions?.maxAllowedRunDurationMinutes
+				);
+			} catch (e) {
+				this.#logger?.error?.(`Auto cleanup failed: ${e}`);
+			}
+			if (!this.#isShuttingDown) this.#scheduleAutoCleanup();
+		}, intervalMs);
+	}
+
+	#stopAutoCleanup() {
+		if (this.#autoCleanupTimeoutId) {
+			clearTimeout(this.#autoCleanupTimeoutId);
+			this.#autoCleanupTimeoutId = null;
+		}
+	}
+
 	/**
 	 * Checks if a handler exists for the given job type.
 	 *
+	 * Returns `true` if there is either a type-specific handler OR a fallback global
+	 * handler (since execution falls back to the global one when a type-specific is missing).
+	 *
 	 * @param type - The job type to check
-	 * @returns `true` if a handler is registered for the type, `false` otherwise
 	 */
 	hasHandler(type: string): boolean {
-		return !!this.#jobHandlers[type];
+		return typeof this.#jobHandlers[type] === "function" || typeof this.#jobHandler === "function";
 	}
 
 	/**
@@ -526,8 +618,13 @@ export class Jobs {
 	 * Initializes the database schema if needed and spawns worker processes
 	 * that continuously poll for and execute pending jobs.
 	 *
+	 * If the instance is already running, this method is a no-op and logs a warning —
+	 * it will NOT spawn additional processors. Use `stop()` then `start()` to restart.
+	 *
+	 * Throws if initialization fails (e.g., database unreachable) so callers can fail fast.
+	 *
 	 * @param processorsCount - Number of concurrent job processors (default: 2)
-	 * @returns A Promise that resolves when all processors are initialized
+	 * @throws If database initialization fails
 	 *
 	 * @example
 	 * ```typescript
@@ -536,46 +633,56 @@ export class Jobs {
 	 * ```
 	 */
 	async start(processorsCount: number = 2): Promise<void> {
-		try {
-			if (this.#isShuttingDown) {
-				const msg = `Cannot start (shutdown in progress detected)`;
-				this.#logger?.error?.(msg);
-				throw new Error(msg);
-			}
-
-			await this.#initializeOnce();
-
-			// Start health monitor
-			if (this.#healthMonitor) {
-				await this.#healthMonitor.start();
-				this.#logger?.debug?.("DB health monitoring started");
-			}
-		} catch (e) {
-			this.#logger?.error?.(`Unable to start: ${e}`);
-			this.#logger?.error?.(`JOBS NOT STARTED`);
+		if (this.#isShuttingDown) {
+			const msg = `Cannot start (shutdown in progress detected)`;
+			this.#logger?.error?.(msg);
+			throw new Error(msg);
+		}
+		if (this.#isRunning) {
+			this.#logger?.warn?.(
+				`Jobs.start() called while already running — ignored.`
+			);
 			return;
 		}
+
+		await this.#initializeOnce();
+
+		// Start health monitor
+		if (this.#healthMonitor) {
+			await this.#healthMonitor.start();
+			this.#logger?.debug?.("DB health monitoring started");
+		}
+
+		this.#isRunning = true;
+		this.#installSigtermHandler();
 
 		for (let i = 0; i < processorsCount; i++) {
 			const processorId = `job-processor-${i}`;
 			const processor = this.#processJobs(processorId);
 			this.#jobProcessors.push(processor);
-			// this.#logger?.debug?.(`Processor '${processorId}' initialized`);
 		}
 		this.#logger?.debug?.(
 			`Job processors initialized (count: ${processorsCount})...`
 		);
+
+		if (this.#autoCleanupOptions) {
+			this.#scheduleAutoCleanup();
+			this.#logger?.debug?.("Auto cleanup scheduled");
+		}
 	}
 
 	/**
 	 * Gracefully stops all running job processors.
 	 *
 	 * Waits for all currently executing jobs to complete before stopping.
-	 * Also stops the health monitor if enabled.
+	 * Also stops the health monitor, auto-cleanup and removes the SIGTERM listener.
 	 *
 	 * @returns A Promise that resolves when all processors have stopped
 	 */
 	async stop(): Promise<void> {
+		// Stop auto cleanup first so it doesn't schedule anything new
+		this.#stopAutoCleanup();
+
 		// Stop health monitor
 		if (this.#healthMonitor) {
 			this.#healthMonitor.stop();
@@ -586,6 +693,9 @@ export class Jobs {
 		await Promise.all(this.#jobProcessors);
 		this.#jobProcessors = [];
 		this.#isShuttingDown = false;
+		this.#isRunning = false;
+
+		this.#removeSigtermHandler();
 	}
 
 	/**
@@ -625,17 +735,19 @@ export class Jobs {
 
 		await this.#initializeOnce();
 
-		return await _create(
-			this.#context,
-			{
-				type,
-				payload,
-				max_attempts,
-				backoff_strategy,
-				run_at,
-				max_attempt_duration_ms,
-			},
-			onDone
+		return await this.#withRetry(() =>
+			_create(
+				this.#context,
+				{
+					type,
+					payload,
+					max_attempts,
+					backoff_strategy,
+					run_at,
+					max_attempt_duration_ms,
+				},
+				onDone
+			)
 		);
 	}
 
@@ -660,11 +772,13 @@ export class Jobs {
 		withAttempts: boolean = false
 	): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
 		await this.#initializeOnce();
-		const job = await _find(this.#context, uid);
+		const job = await this.#withRetry(() => _find(this.#context, uid));
 		let attempts: null | JobAttempt[] = null;
 
 		if (job && withAttempts) {
-			attempts = await _logAttemptFetchAll(this.#context, job.id);
+			attempts = await this.#withRetry(() =>
+				_logAttemptFetchAll(this.#context, job.id)
+			);
 		}
 
 		return { job, attempts };
@@ -678,7 +792,7 @@ export class Jobs {
 	 * @param options.limit - Maximum number of jobs to return
 	 * @param options.offset - Number of jobs to skip
 	 * @param options.asc - Sort ascending by created_at (default: descending)
-	 * @param options.sinceMinutesAgo - Only return jobs created within the last N minutes
+	 * @param options.sinceMinutesAgo - Only return jobs created within the last N minutes (default: 30)
 	 * @returns Array of jobs matching the criteria
 	 *
 	 * @example
@@ -713,20 +827,49 @@ export class Jobs {
 			}
 		}
 
-		return await _fetchAll(this.#context, where, options);
+		return await this.#withRetry(() =>
+			_fetchAll(this.#context, where, options)
+		);
 	}
 
 	/**
 	 * Performs maintenance cleanup tasks.
 	 *
-	 * Currently marks jobs that have been running for too long as expired.
-	 * The cleanup strategy should be called periodically by the consumer.
+	 * Marks jobs stuck in `running` (typically because a worker crashed mid-execution)
+	 * as `expired` and publishes `onDone` events for them so consumers can react.
 	 *
-	 * @returns A Promise that resolves when cleanup is complete
+	 * Called automatically when `autoCleanup` is enabled on the Jobs instance; otherwise
+	 * should be called periodically by the consumer.
+	 *
+	 * @param maxAllowedRunDurationMinutes - Max running time before a job is reaped (default: 5)
+	 * @returns A Promise resolving to the number of jobs reaped
 	 */
-	async cleanup(): Promise<void> {
+	async cleanup(maxAllowedRunDurationMinutes: number = 5): Promise<number> {
 		await this.#initializeOnce();
-		return await _markExpired(this.#context);
+
+		const expired = await this.#withRetry(() =>
+			_markExpired(this.#context, maxAllowedRunDurationMinutes)
+		);
+
+		// Publish onDone events for every reaped job so consumers (event listeners and
+		// per-uid callbacks from onDoneFor / create()'s onDone) observe terminal state.
+		for (const job of expired) {
+			this.#pubsubDone.publish(job.type, job);
+			const perUid = this.#onDoneCallbacks.get(job.uid);
+			if (perUid) {
+				for (const cb of perUid) {
+					try {
+						cb(job);
+					} catch (e) {
+						this.#logger?.error?.(`cleanup onDone callback: ${e}`);
+					}
+				}
+				this.#onDoneCallbacks.delete(job.uid);
+				this.#onAttemptCallbacks.delete(job.uid);
+			}
+		}
+
+		return expired.length;
 	}
 
 	/**
@@ -743,7 +886,9 @@ export class Jobs {
 	 */
 	async healthPreview(sinceMinutesAgo: number = 60): Promise<HealthPreviewRow[]> {
 		await this.#initializeOnce();
-		return await _healthPreview(this.#context, sinceMinutesAgo);
+		return await this.#withRetry(() =>
+			_healthPreview(this.#context, sinceMinutesAgo)
+		);
 	}
 
 	/**
@@ -765,14 +910,14 @@ export class Jobs {
 	 * @returns A Promise that resolves when uninstallation is complete
 	 */
 	async uninstall(): Promise<void> {
-		return await _uninstall(this.#context);
+		return await this.#withRetry(() => _uninstall(this.#context));
 	}
 
 	/**
 	 * Registers a callback for when a specific job completes.
 	 *
 	 * The callback is executed once when the job with the given UID
-	 * reaches a final state (completed or failed).
+	 * reaches a final state (completed, failed, or expired).
 	 *
 	 * @param jobUid - The unique identifier of the job to watch
 	 * @param cb - Callback function to execute on completion
@@ -803,11 +948,11 @@ export class Jobs {
 	 * Subscribes to job completion events for specific job types.
 	 *
 	 * The callback is executed when any job of the specified type(s) completes
-	 * (either successfully or with failure after exhausting retries).
+	 * (success, terminal failure, or expiration).
 	 *
 	 * @param type - Job type or array of types to subscribe to
 	 * @param cb - Callback function to execute on job completion
-	 * @param skipIfExists - Skip if callback already registered (default: true)
+	 * @param skipIfExists - Skip if the callback is already subscribed to that type (default: true)
 	 * @returns Unsubscribe function to remove the listener
 	 *
 	 * @example
@@ -838,7 +983,7 @@ export class Jobs {
 	 *
 	 * @param type - Job type or array of types to subscribe to
 	 * @param cb - Callback function to execute on each attempt
-	 * @param skipIfExists - Skip if callback already registered (default: true)
+	 * @param skipIfExists - Skip if the callback is already subscribed to that type (default: true)
 	 * @returns Unsubscribe function to remove the listener
 	 *
 	 * @example
@@ -856,39 +1001,53 @@ export class Jobs {
 		return this.#onEvent(this.#pubsubAttempt, type, cb, skipIfExists);
 	}
 
-	/** Internal DRY helper */
+	/** Internal DRY helper — subscribes `cb` to each type via an error-catching wrapper. */
 	#onEvent(
 		pubsub: ReturnType<typeof createPubSub>,
 		type: string | string[],
-		cb: (job: Job) => void,
+		cb: JobAwareFn,
 		skipIfExists: boolean
 	): Unsubscriber {
 		const types = Array.isArray(type) ? type : [type];
 		const unsubs: (() => void)[] = [];
 
-		// wrap callback to make sure it will not kill the server on unhandled error
-		// (the onEvent handlers will be triggered outside of typical webserver request handlers)
-		if (!Jobs.#onEventWraps.has(cb)) {
-			Jobs.#onEventWraps.set(cb, async (job: Job) => {
-				try {
-					await cb(job);
-				} catch (e) {
-					this.#logger?.error?.(`onEvent ${type}: ${e}`);
+		for (const t of types) {
+			const byCb = this.#onEventWraps.get(t) ?? new Map<JobAwareFn, Subscriber>();
+			let wrapped = byCb.get(cb);
+
+			if (skipIfExists && wrapped && pubsub.isSubscribed(t, wrapped)) {
+				// already subscribed to this type with this cb — nothing to do
+				continue;
+			}
+
+			if (!wrapped) {
+				wrapped = async (job: Job) => {
+					try {
+						await cb(job);
+					} catch (e) {
+						this.#logger?.error?.(`onEvent ${t}: ${e}`);
+					}
+				};
+				byCb.set(cb, wrapped);
+				this.#onEventWraps.set(t, byCb);
+			}
+
+			const unsub = pubsub.subscribe(t, wrapped);
+			unsubs.push(() => {
+				unsub();
+				// Only remove the wrap if this subscription was the sole user of it for this type.
+				const tMap = this.#onEventWraps.get(t);
+				if (tMap && !pubsub.isSubscribed(t, wrapped!)) {
+					tMap.delete(cb);
+					if (tMap.size === 0) this.#onEventWraps.delete(t);
 				}
 			});
 		}
-		const wrapped = Jobs.#onEventWraps.get(cb) as Subscriber;
 
-		types.forEach((t) => {
-			if (!skipIfExists || !pubsub.isSubscribed(t, wrapped)) {
-				const unsub = pubsub.subscribe(t, wrapped);
-				unsubs.push(() => {
-					unsub();
-					Jobs.#onEventWraps.delete(cb);
-				});
-			}
-		});
-		return () => unsubs.forEach((u) => u());
+		const composite = (() => unsubs.forEach((u) => u())) as Unsubscriber;
+		(composite as unknown as { [Symbol.dispose]: () => void })[Symbol.dispose] =
+			() => unsubs.forEach((u) => u());
+		return composite;
 	}
 
 	/**
@@ -899,6 +1058,7 @@ export class Jobs {
 	unsubscribeAll(): void {
 		this.#pubsubAttempt.unsubscribeAll();
 		this.#pubsubDone.unsubscribeAll();
+		this.#onEventWraps.clear();
 	}
 
 	/**
@@ -928,6 +1088,8 @@ export class Jobs {
 		pubsubDone: ReturnType<ReturnType<typeof createPubSub>["__dump"]>;
 		onDoneCallbacks: Record<string, Set<JobAwareFn>>;
 		onAttemptCallbacks: Record<string, Set<JobAwareFn>>;
+		processorsCount: number;
+		isRunning: boolean;
 	} {
 		return {
 			pubsubAttempt: this.#pubsubAttempt.__dump(),
@@ -936,6 +1098,8 @@ export class Jobs {
 			onAttemptCallbacks: Object.fromEntries(
 				this.#onAttemptCallbacks.entries()
 			),
+			processorsCount: this.#jobProcessors.length,
+			isRunning: this.#isRunning,
 		};
 	}
 

@@ -13,6 +13,7 @@ Complete API documentation for `@marianmeres/steve`.
   - [JobAttempt](#jobattempt)
   - [JobCreateOptions](#jobcreateoptions)
   - [JobsOptions](#jobsoptions)
+  - [AutoCleanupOptions](#autocleanupoptions)
   - [JobHandler](#jobhandler)
   - [JobAwareFn](#jobawarefn)
   - [JobCreateDTO](#jobcreatedto)
@@ -74,6 +75,10 @@ Starts job processing with the specified number of concurrent workers.
 **Parameters:**
 - `processorsCount` - Number of concurrent job processors (default: `2`)
 
+**Behavior:**
+- **Throws** if initialization fails (e.g., database unreachable) so callers can fail fast.
+- **Idempotent** — calling `start()` while already running is a no-op with a warning log; it will NOT spawn additional processors. To restart, call `stop()` first.
+
 **Example:**
 ```typescript
 await jobs.start(4); // Start with 4 concurrent workers
@@ -87,7 +92,7 @@ await jobs.start(4); // Start with 4 concurrent workers
 async stop(): Promise<void>
 ```
 
-Gracefully stops all running job processors. Waits for currently executing jobs to complete.
+Gracefully stops all running job processors. Waits for currently executing jobs to complete, stops the health monitor and auto-cleanup loop, and removes the SIGTERM listener.
 
 ---
 
@@ -303,10 +308,23 @@ Registers a callback for each attempt of a specific job.
 #### cleanup
 
 ```typescript
-async cleanup(): Promise<void>
+async cleanup(maxAllowedRunDurationMinutes?: number): Promise<number>
 ```
 
-Performs maintenance cleanup tasks. Marks jobs that have been running too long as expired.
+Marks jobs stuck in `running` (e.g., because a worker crashed mid-execution) as `expired`, sets `completed_at`, and publishes `onDone` events for each reaped job. Returns the number of jobs reaped.
+
+Called automatically when `autoCleanup` is enabled on the Jobs instance; otherwise should be called periodically by the consumer.
+
+**Parameters:**
+- `maxAllowedRunDurationMinutes` - Threshold before a `running` job is considered stuck (default: `5`)
+
+**Returns:** Number of jobs reaped
+
+**Example:**
+```typescript
+const reaped = await jobs.cleanup(10);
+console.log(`Reaped ${reaped} stuck jobs`);
+```
 
 ---
 
@@ -402,20 +420,18 @@ interface Job {
   type: string;                  // Job type identifier
   payload: Record<string, unknown>;  // Custom payload data
   result: null | undefined | Record<string, unknown>;  // Handler result
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "expired";
   attempts: number;              // Number of attempts made
   max_attempts: number;          // Maximum retry attempts
   max_attempt_duration_ms: number;  // Max attempt duration (0 = no limit)
   created_at: Date;
   updated_at: Date;
-  started_at: Date;
-  completed_at: Date;
+  started_at: Date;              // First-attempt start (preserved across retries)
+  completed_at: Date;             // Set for completed, failed, and expired
   run_at: Date;                  // Scheduled run time
   backoff_strategy: "none" | "exp";
 }
 ```
-
-Note: The `expired` status exists in the database (set by `cleanup()`) but is not part of the TypeScript type union.
 
 ---
 
@@ -463,7 +479,7 @@ interface JobsOptions {
   jobHandler?: JobHandler;       // Global job handler
   jobHandlers?: JobHandlersMap;  // Map of handlers by type
   tablePrefix?: string;          // Table name prefix (e.g., "myschema.")
-  pollTimeoutMs?: number;        // Polling interval (default: 1000)
+  pollTimeoutMs?: number;        // Polling interval (default: 1000, ±25% jitter)
   logger?: Logger;               // Logger instance
   gracefulSigterm?: boolean;     // Enable SIGTERM handling (default: true)
   dbRetry?: DbRetryOptions | boolean;  // Enable retry on transient failures
@@ -472,6 +488,20 @@ interface JobsOptions {
     onUnhealthy?: (status: DbHealthStatus) => void;
     onHealthy?: (status: DbHealthStatus) => void;
   };
+  autoCleanup?: boolean | AutoCleanupOptions;  // Periodic expired-reaper
+}
+```
+
+---
+
+### AutoCleanupOptions
+
+Periodic reaper configuration for marking stuck-`running` jobs as `expired`.
+
+```typescript
+interface AutoCleanupOptions {
+  intervalMs?: number;                    // Check interval (default: 60000)
+  maxAllowedRunDurationMinutes?: number;  // Stuck-threshold (default: 5)
 }
 ```
 
@@ -480,10 +510,20 @@ interface JobsOptions {
 ### JobHandler
 
 ```typescript
-type JobHandler = (job: Job) => unknown | Promise<unknown>;
+type JobHandler = (job: Job, signal?: AbortSignal) => unknown | Promise<unknown>;
 ```
 
 A function that processes a job. The returned value is stored in the job's `result` field. Must throw an error to indicate failure.
+
+When `max_attempt_duration_ms > 0`, the second argument is an `AbortSignal` that fires when the attempt times out. Handlers should respect the signal for best behavior; handlers that ignore it will keep running in the background even after the attempt is recorded as timed-out (JavaScript cannot forcibly cancel a running Promise).
+
+**Example (cooperative abort):**
+```typescript
+async function handler(job: Job, signal?: AbortSignal) {
+  const res = await fetch(url, { signal });  // fetch respects AbortSignal
+  return await res.json();
+}
+```
 
 ---
 
@@ -556,7 +596,7 @@ const ATTEMPT_STATUS = {
 ```typescript
 const BACKOFF_STRATEGY = {
   NONE: "none",  // No delay between retries
-  EXP: "exp",    // Exponential backoff (2^attempts seconds)
+  EXP: "exp",    // Exponential backoff: min(2^attempts seconds, 1 hour)
 } as const;
 ```
 

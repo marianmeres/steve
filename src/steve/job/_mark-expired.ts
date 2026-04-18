@@ -1,25 +1,34 @@
-import { JOB_STATUS, type JobContext } from "../jobs.ts";
+import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
 
 /**
- * Will mark jobs which are "running" too long as expired (they may have crashed mid-job).
- * This is just a cleanup (the inaccurate "running" state has no effect on the system).
+ * Mark jobs stuck in `running` longer than `maxAllowedRunDurationMinutes` as expired.
  *
- * Note: we could restart (mark as pending) them instead, but that might create confusion
- * later as the actual job (whatever it is doing) may have become obsolete in the meantime.
+ * Running-for-too-long means the worker almost certainly crashed mid-job. We flip
+ * them to `expired` (terminal — we don't auto-retry because the work may now be
+ * stale) and set `completed_at` so timing queries behave correctly.
+ *
+ * Returns the affected rows so the caller can publish `onDone` events.
  */
 export async function _markExpired(
 	context: JobContext,
 	maxAllowedRunDurationMinutes = 5
-): Promise<void> {
+): Promise<Job[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
-	const num = Math.round(maxAllowedRunDurationMinutes);
+	const num = Number.isFinite(+maxAllowedRunDurationMinutes)
+		? Math.max(0, Math.round(+maxAllowedRunDurationMinutes))
+		: 5;
 
-	await db.query(
-		`UPDATE ${tableJobs} 
-		SET status = '${JOB_STATUS.EXPIRED}', 
-			updated_at = NOW()
-		WHERE status = '${JOB_STATUS.RUNNING}' 
-			AND started_at < NOW() - INTERVAL '${num} minutes'`
+	const { rows } = await db.query(
+		`UPDATE ${tableJobs}
+		SET status = '${JOB_STATUS.EXPIRED}',
+			updated_at = NOW(),
+			completed_at = NOW()
+		WHERE status = '${JOB_STATUS.RUNNING}'
+			AND started_at < NOW() - ($1::bigint || ' minutes')::interval
+		RETURNING *`,
+		[num]
 	);
+
+	return rows as Job[];
 }

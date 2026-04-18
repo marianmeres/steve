@@ -1,1 +1,3 @@
-PostgreSQL-based job queue and processing library with distributed workers, automatic retry with exponential backoff, job scheduling, and database resilience. Provides atomic job claiming via FOR UPDATE SKIP LOCKED, health monitoring, and graceful shutdown.
+PostgreSQL-based job queue and processing library with distributed workers, automatic 
+retry with exponential backoff, job scheduling, and database resilience. Provides atomic 
+job claiming via FOR UPDATE SKIP LOCKED, health monitoring, and graceful shutdown.

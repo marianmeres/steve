@@ -1,10 +1,11 @@
 import { BACKOFF_STRATEGY, JOB_STATUS, type JobContext } from "../jobs.ts";
+import { withTransaction } from "../utils/with-transaction.ts";
 
 export function _schemaDrop(context: Pick<JobContext, "tableNames">): string {
 	const { tableNames } = context;
 	const { tableJobs, tableAttempts } = tableNames;
 	return `
-		DROP TABLE IF EXISTS ${tableAttempts}; 
+		DROP TABLE IF EXISTS ${tableAttempts};
 		DROP TABLE IF EXISTS ${tableJobs};
 	`;
 }
@@ -67,14 +68,14 @@ export async function _initialize(
 		.filter(Boolean)
 		.join("\n");
 
-	await db.query("BEGIN");
-	await db.query(sql);
-	await db.query("COMMIT");
+	await withTransaction(db, async (client) => {
+		await client.query(sql);
+	});
 }
 
 export async function _uninstall(context: JobContext): Promise<void> {
 	const { db } = context;
-	await db.query("BEGIN");
-	await db.query(_schemaDrop(context));
-	await db.query("COMMIT");
+	await withTransaction(db, async (client) => {
+		await client.query(_schemaDrop(context));
+	});
 }
