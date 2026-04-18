@@ -257,7 +257,7 @@
       "jsr:@marianmeres/demino@^1.8.0",
       "jsr:@marianmeres/npmbuild@^1.12.0",
       "jsr:@marianmeres/parse-boolean@^2.1.0",
-      "jsr:@marianmeres/pubsub@^2.4.6",
+      "jsr:@marianmeres/pubsub@3",
       "jsr:@std/assert@^1.0.19",
       "jsr:@std/fs@^1.0.23",
       "jsr:@std/path@^1.1.4",
