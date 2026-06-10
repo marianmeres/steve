@@ -16,15 +16,15 @@
   "imports": {
     "@marianmeres/clog": "jsr:@marianmeres/clog@^3.21.0",
     "@marianmeres/data-to-sql-params": "jsr:@marianmeres/data-to-sql-params@^1.6.0",
-    "@marianmeres/demino": "jsr:@marianmeres/demino@^1.8.5",
+    "@marianmeres/demino": "jsr:@marianmeres/demino@^1.14.0",
     "@marianmeres/npmbuild": "jsr:@marianmeres/npmbuild@^1.16.0",
     "@marianmeres/parse-boolean": "jsr:@marianmeres/parse-boolean@^2.1.0",
     "@marianmeres/pubsub": "jsr:@marianmeres/pubsub@^3.0.0",
     "@std/assert": "jsr:@std/assert@^1.0.19",
-    "@std/fs": "jsr:@std/fs@^1.0.23",
-    "@std/path": "jsr:@std/path@^1.1.4",
+    "@std/fs": "jsr:@std/fs@^1.0.24",
+    "@std/path": "jsr:@std/path@^1.1.5",
     "@types/pg": "npm:@types/pg@^8.20.0",
-    "pg": "npm:pg@^8.20.0"
+    "pg": "npm:pg@^8.21.0"
   },
   "fmt": {
     "useTabs": true,
