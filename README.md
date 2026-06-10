@@ -97,7 +97,9 @@ const job = await jobs.create(
         // 'exp' -> exp. backoff with 2^attempts seconds
         backoff_strategy: 'exp', // or 'none' 
         // timestamp to schedule job run/start in the future
-        run_at: Date
+        run_at: Date,
+        // optional tenant to tag the job with, for audit/filtering (see Multitenancy)
+        tenant_id: 'acme'
     }, // optional options
     // optional "onDone" callback for this particular job
     function onDone(job: Job) {
@@ -147,7 +149,9 @@ new Jobs({
 ```typescript
 jobs.find(
     uid: string,
-    withAttempts: boolean = false
+    withAttempts: boolean = false,
+    // optional tenant guard - a mismatch is reported as not-found (job is undefined)
+    options: { tenant_id?: string | null } = {}
 ): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
 ```
 
@@ -156,9 +160,52 @@ jobs.find(
 ```typescript
 jobs.fetchAll(
     status: undefined | null | Job["status"] | Job["status"][] = null,
-    options: Partial<{ limit: number; offset: number; }> = {}
+    options: Partial<{
+        limit: number;
+        offset: number;
+        // optionally restrict to one or more tenants
+        tenant_id: string | string[] | null;
+    }> = {}
 ): Promise<Job[]>
 ```
+
+## Multitenancy (`tenant_id`)
+
+Steve has an **optional**, free-form `tenant_id` column on every job, following the
+ecosystem tenant convention. It is purely for **audit / scoping / filtering** — there is
+**no foreign key** and no tenant registry table is required. If you never set it, nothing
+changes: jobs are created with `tenant_id = null` (global / un-scoped) and every API
+behaves exactly as before.
+
+```typescript
+// tag a job
+await jobs.create('send-email', { to: '...' }, { tenant_id: 'acme' });
+
+// the tag is on the returned row and survives processing
+const { job } = await jobs.find(uid);
+job.tenant_id; // 'acme' | null
+
+// audit / filter by tenant
+await jobs.fetchAll(null, { tenant_id: 'acme' });             // one tenant
+await jobs.fetchAll('failed', { tenant_id: ['acme', 'bca'] }); // many + status
+await jobs.healthPreview(60, { tenant_id: 'acme' });          // per-tenant stats
+await jobs.cleanup(5, { tenant_id: 'acme' });                 // reap one tenant's stuck jobs
+```
+
+Notes / scope:
+
+- **Workers stay tenant-blind.** A worker pool drains jobs for **all** tenants (including
+  global `null` jobs) regardless of how they were tagged — per-tenant worker pools and
+  cross-tenant fairness are intentionally out of scope.
+- **`autoCleanup` is always tenant-blind** (it reaps every tenant). Pass `tenant_id` to a
+  manual `cleanup()` call when you need scoped reaping.
+- **Events are tenant-blind.** A type-keyed `jobs.onDone('email', cb)` fires for **every**
+  tenant's `email` jobs — filter on `job.tenant_id` inside the callback if you need
+  per-tenant reaction. (`onDoneFor` / `create(..., onDone)` are uid-keyed and inherently
+  tenant-safe.)
+- There is **no FK** by design. If you want referential integrity to a tenant registry,
+  add the constraint yourself in an app-level migration (e.g. `ALTER TABLE __job ADD
+  CONSTRAINT ... FOREIGN KEY (tenant_id) REFERENCES ... NOT VALID`).
 
 ## Database Resilience
 
@@ -259,6 +306,24 @@ need code changes, but a few behaviors differ:
 - **`started_at` now records the FIRST attempt start, not the latest.** If you
   queried `started_at` expecting the current retry's start, switch to
   `updated_at` or to the latest attempt log row.
+
+## Upgrading to 3.x (optional `tenant_id`)
+
+3.x adds the optional [`tenant_id`](#multitenancy-tenant_id) column. It is additive and
+opt-in; **single-tenant / tenant-unaware users need no code or behavior changes**.
+
+- **`Job` now always carries a `tenant_id: string | null` field.** This is the only
+  breaking change and it is **type-level only**: code that *reads* `Job` is unaffected
+  (the field is simply present, `null` for un-scoped jobs); code that *constructs* `Job`
+  object literals (mocks/fixtures) must add `tenant_id`.
+- **The `__job` table auto-gains a nullable `tenant_id` column** on next start via
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (metadata-only — instant, no table rewrite;
+  existing rows read back `null`). The runtime claim query and the default index layout
+  are unchanged; one additional **partial** index is added (zero write cost while all
+  `tenant_id` are `null`). The attempt-log table is intentionally unchanged.
+- **No FK and no tenant registry are required.** `create()`, `find()`, `fetchAll()`,
+  `healthPreview()` and `cleanup()` gain optional `tenant_id` arguments; omitting them
+  preserves today's behavior exactly.
 
 ## License
 

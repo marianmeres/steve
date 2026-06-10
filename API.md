@@ -112,7 +112,7 @@ Creates a new job and adds it to the processing queue.
 **Parameters:**
 - `type` - Job type identifier used to route to the appropriate handler
 - `payload` - Custom data to pass to the job handler (default: `{}`)
-- `options` - Configuration for retry, timeout, and scheduling (see [JobCreateOptions](#jobcreateoptions))
+- `options` - Configuration for retry, timeout, scheduling, and the optional `tenant_id` tag (see [JobCreateOptions](#jobcreateoptions))
 - `onDone` - Callback executed when this specific job completes
 
 **Returns:** The created `Job` object with its assigned UID
@@ -134,7 +134,8 @@ console.log(`Created job: ${job.uid}`);
 ```typescript
 async find(
   uid: string,
-  withAttempts?: boolean
+  withAttempts?: boolean,
+  options?: { tenant_id?: string | null }
 ): Promise<{ job: Job; attempts: null | JobAttempt[] }>
 ```
 
@@ -143,6 +144,7 @@ Finds a job by its unique identifier.
 **Parameters:**
 - `uid` - The unique identifier (UUID) of the job
 - `withAttempts` - Whether to include attempt history (default: `false`)
+- `options.tenant_id` - Optional tenant guard. When set, a job whose `tenant_id` does not match is reported as **not-found** (`job` is `undefined`). Since `uid` is a globally-unique UUID this is defense-in-depth, not a correctness requirement.
 
 **Example:**
 ```typescript
@@ -165,6 +167,7 @@ async fetchAll(
     offset?: number | string;
     asc?: number | string | boolean;
     sinceMinutesAgo?: number;
+    tenant_id?: string | string[] | null;
   }
 ): Promise<Job[]>
 ```
@@ -177,6 +180,7 @@ Fetches all jobs, optionally filtered by status.
 - `options.offset` - Number of jobs to skip
 - `options.asc` - Sort ascending by created_at (default: descending)
 - `options.sinceMinutesAgo` - Only return jobs created within the last N minutes
+- `options.tenant_id` - Only return jobs tagged with this tenant (single value or array)
 
 **Example:**
 ```typescript
@@ -308,7 +312,10 @@ Registers a callback for each attempt of a specific job.
 #### cleanup
 
 ```typescript
-async cleanup(maxAllowedRunDurationMinutes?: number): Promise<number>
+async cleanup(
+  maxAllowedRunDurationMinutes?: number,
+  options?: { tenant_id?: string | string[] | null }
+): Promise<number>
 ```
 
 Marks jobs stuck in `running` (e.g., because a worker crashed mid-execution) as `expired`, sets `completed_at`, and publishes `onDone` events for each reaped job. Returns the number of jobs reaped.
@@ -317,6 +324,7 @@ Called automatically when `autoCleanup` is enabled on the Jobs instance; otherwi
 
 **Parameters:**
 - `maxAllowedRunDurationMinutes` - Threshold before a `running` job is considered stuck (default: `5`)
+- `options.tenant_id` - Optionally reap only the given tenant(s)' stuck jobs. Omitted reaps across **all** tenants. **Note:** `autoCleanup` always runs tenant-blind; pass this only on manual `cleanup()` calls.
 
 **Returns:** Number of jobs reaped
 
@@ -331,13 +339,17 @@ console.log(`Reaped ${reaped} stuck jobs`);
 #### healthPreview
 
 ```typescript
-async healthPreview(sinceMinutesAgo?: number): Promise<HealthPreviewRow[]>
+async healthPreview(
+  sinceMinutesAgo?: number,
+  options?: { tenant_id?: string | string[] | null }
+): Promise<HealthPreviewRow[]>
 ```
 
 Collects job statistics for health monitoring.
 
 **Parameters:**
 - `sinceMinutesAgo` - Time window for statistics (default: `60`)
+- `options.tenant_id` - Optionally restrict the stats to one or more tenants
 
 ---
 
@@ -419,6 +431,7 @@ interface Job {
   uid: string;                   // Unique identifier (UUID)
   type: string;                  // Job type identifier
   payload: Record<string, unknown>;  // Custom payload data
+  tenant_id: string | null;      // Owning tenant, or null for a global/un-scoped job
   result: null | undefined | Record<string, unknown>;  // Handler result
   status: "pending" | "running" | "completed" | "failed" | "expired";
   attempts: number;              // Number of attempts made
@@ -464,6 +477,7 @@ interface JobCreateOptions {
   max_attempt_duration_ms?: number;  // Default: 0 (no limit)
   backoff_strategy?: "none" | "exp";  // Default: "exp"
   run_at?: Date;                 // Schedule for future execution
+  tenant_id?: string | null;     // Optional tenant tag; omit/null/"" => global (NULL). No FK.
 }
 ```
 

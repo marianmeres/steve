@@ -8,15 +8,27 @@ function coerceMinutes(v: unknown, fallback: number): number {
 	return Math.max(0, Math.trunc(n));
 }
 
-/** Internal select one */
-export async function _find(context: JobContext, uid: string): Promise<Job> {
+/** Internal select one (optional tenant guard; no-tenant path is byte-identical). */
+export async function _find(
+	context: JobContext,
+	uid: string,
+	tenantId: string | null = null
+): Promise<Job> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
-	const { rows } = await db.query(`SELECT * FROM ${tableJobs} WHERE uid = $1`, [
-		uid,
-	]);
+	if (tenantId == null) {
+		const { rows } = await db.query(
+			`SELECT * FROM ${tableJobs} WHERE uid = $1`,
+			[uid]
+		);
+		return rows[0] as Job;
+	}
 
+	const { rows } = await db.query(
+		`SELECT * FROM ${tableJobs} WHERE uid = $1 AND tenant_id = $2`,
+		[uid, tenantId]
+	);
 	return rows[0] as Job;
 }
 

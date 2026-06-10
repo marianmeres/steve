@@ -32,6 +32,11 @@ export async function _create(
 		backoff_strategy: true,
 		max_attempt_duration_ms: true,
 		run_at: (v: unknown) => normalizeRunAt(v),
+		// Returning `undefined` makes dataToSqlParams OMIT the column entirely, so a
+		// no-tenant INSERT is byte-identical to pre-tenant_id steve (DB applies NULL).
+		// A provided value is clamped to the VARCHAR(255) width.
+		tenant_id: (v: unknown) =>
+			v == null || v === "" ? undefined : `${v}`.slice(0, 255),
 	});
 
 	const sql = `INSERT INTO ${tableJobs} (${keys}) VALUES (${placeholders}) RETURNING *`;

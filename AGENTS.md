@@ -95,7 +95,15 @@ From `src/mod.ts`:
 
 ## Database Schema
 
-Two tables are created (with configurable prefix). Schema uses `CREATE TABLE IF NOT EXISTS`; there is NO schema migration across Steve versions yet — breaking column changes require manual migration.
+Two tables are created (with configurable prefix). The schema is self-managed and
+idempotent: `_schemaCreate` is re-run inside `withTransaction` on the first init of every
+process (no migration ledger). Most of it is `CREATE TABLE IF NOT EXISTS`, so **breaking
+column changes still require manual migration** — the ONE exception is the additive
+`tenant_id` column, which self-heals onto already-deployed tables via
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255)` (metadata-only; legacy
+rows read back NULL). The matching index is **partial** (`WHERE tenant_id IS NOT NULL`) so
+a tenant-unaware deployment pays ~zero write cost. There is intentionally **no FK** on
+`tenant_id` (see Tenancy below).
 
 ### `__job`
 | Column | Type | Description |
@@ -104,6 +112,7 @@ Two tables are created (with configurable prefix). Schema uses `CREATE TABLE IF 
 | uid | UUID | Unique identifier |
 | type | VARCHAR | Job type for routing |
 | payload | JSONB | Custom job data |
+| tenant_id | VARCHAR(255) | Optional, nullable audit/scoping tag. NULL = global/un-scoped. No FK. |
 | result | JSONB | Handler return value |
 | status | VARCHAR | pending/running/completed/failed/expired |
 | attempts | INT | Attempt count (1-based after claim) |
@@ -175,6 +184,16 @@ PENDING → RUNNING → COMPLETED
 - `#onEventWraps` is per-instance and keyed by `(type, cb)` — safe for callbacks shared across Jobs instances and for multi-type subscribe+unsubscribe
 - `unsubscribeAll()` clears both the pubsubs AND the internal wrap registry
 
+### Tenancy (`tenant_id`)
+- **Optional, audit-only, no FK.** `tenant_id` is a nullable `VARCHAR(255)` tag on `__job` only (NOT on the attempt-log table — reachable via `job_id`). It follows the ecosystem `tenant_id` convention but deliberately omits the `tenantIdFk`/registry coupling: a job queue is infrastructure, and `ON DELETE CASCADE` would destroy the very audit trail the column exists for.
+- **NULL = global/un-scoped**, chosen over a `NOT NULL DEFAULT 'default'` sentinel so infra jobs are represented honestly and the self-heal `ALTER` stays metadata-only.
+- **Write path:** `create(type, payload, { tenant_id })`. In `_create.ts` the allowlist transformer returns `undefined` for empty/null, so `dataToSqlParams` OMITS the column and a no-tenant INSERT is byte-identical to pre-tenant steve (DB applies NULL). `Jobs.create` forwards `tenant_id` into the DTO unconditionally (undefined when absent — same convention as `run_at`).
+- **Read/maintenance filters** are all OPTIONAL and default to today's behavior: `fetchAll(status, { tenant_id })` (interpolated via `pgQuoteValue`, same trust model as the status filter), `find(uid, withAttempts, { tenant_id })` (guard; mismatch → not-found), `healthPreview(mins, { tenant_id })` and `cleanup(mins, { tenant_id })` (both **bind** the tenant values via `= ANY($n::varchar[])`, never interpolate).
+- **Claiming is tenant-blind by design.** `_claim-next.ts` is UNCHANGED (zero bound params); a worker pool drains all tenants incl. global NULL jobs. Per-tenant worker pools, cross-tenant fairness, and `claimTenantIds` were intentionally left out of scope.
+- **`autoCleanup` is always tenant-blind** (the scheduled reaper calls `cleanup()` with no tenant). Scoped reaping is manual-only.
+- **Events are tenant-blind**: type-keyed `onDone`/`onAttempt` fire across ALL tenants — filter on `job.tenant_id` in the callback. `onDoneFor`/`create(onDone)` are uid-keyed and inherently tenant-safe.
+- `JobContext` did NOT change (no per-instance tenant state); `static __schema(prefix)` did NOT change (always emits the column + partial index unconditionally — zero cost when unused).
+
 ## Dependencies
 
 - `pg` - PostgreSQL driver
@@ -202,6 +221,7 @@ Test files:
 - `tests/jobs.test.ts` — core Jobs class behavior
 - `tests/db-resilience.test.ts` — retry and health monitor
 - `tests/fixes.test.ts` — regression guards for v2.0.0 fixes (transactions, injection, event isolation, lifecycle, reaper, AbortSignal, backoff cap, etc.)
+- `tests/tenant.test.ts` — optional `tenant_id` (tag/default-null, fetchAll/find/healthPreview/cleanup filters, tenant-blind claiming, and the `ADD COLUMN IF NOT EXISTS` self-heal on a pre-tenant table)
 
 ## Common Patterns
 

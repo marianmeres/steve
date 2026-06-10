@@ -29,6 +29,7 @@ export function _schemaCreate(context: Pick<JobContext, "tableNames">): string {
 			attempts        	INTEGER DEFAULT 0,
 			max_attempts    	INTEGER DEFAULT 3,
 			max_attempt_duration_ms INTEGER DEFAULT 0,
+			tenant_id       	VARCHAR(255),
 			created_at      	TIMESTAMPTZ DEFAULT NOW(),
 			updated_at      	TIMESTAMPTZ DEFAULT NOW(),
 			run_at          	TIMESTAMPTZ DEFAULT NOW(),
@@ -51,10 +52,23 @@ export function _schemaCreate(context: Pick<JobContext, "tableNames">): string {
 			FOREIGN KEY (job_id) REFERENCES ${tableJobs}(id) ON UPDATE CASCADE ON DELETE CASCADE
 		);
 
+		-- Self-heal: add tenant_id to an already-deployed __job table (steve has no
+		-- migration ledger, so the schema blob is re-run on every fresh process and
+		-- must converge any starting state). Nullable, no default => metadata-only on
+		-- a populated table (instant, no rewrite); legacy rows read back NULL. MUST
+		-- precede the tenant index below (the index references the column).
+		ALTER TABLE ${tableJobs} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255);
+
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_status_run_at ON ${tableJobs}(status, run_at);
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_uid ON ${tableJobs}(uid);
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_status ON ${tableJobs}(status);
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableAttempts)}_job_id ON ${tableAttempts}(job_id);
+
+		-- PARTIAL composite, tenant_id-first per ecosystem convention. The predicate
+		-- excludes NULL rows, so a tenant-unaware deployment (every tenant_id NULL)
+		-- posts ZERO index entries => ~zero write cost. Tenant audit reads always
+		-- filter "tenant_id = ..." (implicitly NOT NULL), so they match it perfectly.
+		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_tenant ON ${tableJobs}(tenant_id, created_at) WHERE tenant_id IS NOT NULL;
 	`;
 }
 

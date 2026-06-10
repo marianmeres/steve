@@ -138,6 +138,14 @@ export interface Job {
 	type: string;
 	/** Custom payload data passed when creating the job */
 	payload: Record<string, unknown>;
+	/**
+	 * Owning tenant, or `null` for a global / un-scoped job.
+	 *
+	 * Optional, free-form audit/scoping tag — there is NO foreign key and no tenant
+	 * registry is required. Jobs created without a tenant are `null`. See `create()`
+	 * and the tenant filters on `fetchAll`/`find`/`healthPreview`/`cleanup`.
+	 */
+	tenant_id: string | null;
 	/** Result returned by the job handler on successful completion */
 	result: null | undefined | Record<string, unknown>;
 	/** Current status of the job */
@@ -206,6 +214,12 @@ export interface JobCreateOptions {
 	backoff_strategy?: typeof BACKOFF_STRATEGY.NONE | typeof BACKOFF_STRATEGY.EXP;
 	/** Schedule the job to run at a specific time in the future */
 	run_at?: Date;
+	/**
+	 * Optional tenant to tag this job with (for audit / filtering). Omitted, `null`
+	 * or `""` => global (NULL) job. Free-form string, max 255 chars (clamped); there
+	 * is no foreign key and no tenant registry is required.
+	 */
+	tenant_id?: string | null;
 }
 
 /**
@@ -301,6 +315,21 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
 		tableJobs: `${tablePrefix}__job`,
 		tableAttempts: `${tablePrefix}__job_attempt_log`,
 	};
+}
+
+/**
+ * Normalizes a tenant filter (`string | string[] | null`) into a deduped,
+ * empties-dropped `string[]`, or `null` when there is nothing to filter by.
+ * @internal
+ */
+function normalizeTenantIds(
+	v: string | string[] | null | undefined
+): string[] | null {
+	if (v == null) return null;
+	const ids = [
+		...new Set((Array.isArray(v) ? v : [v]).filter(Boolean)),
+	] as string[];
+	return ids.length ? ids : null;
 }
 
 /**
@@ -731,6 +760,7 @@ export class Jobs {
 			backoff_strategy = BACKOFF_STRATEGY.EXP,
 			max_attempt_duration_ms = 0,
 			run_at,
+			tenant_id,
 		} = options || {};
 
 		await this.#initializeOnce();
@@ -745,6 +775,8 @@ export class Jobs {
 					backoff_strategy,
 					run_at,
 					max_attempt_duration_ms,
+					// undefined when not supplied => column omitted from INSERT (DB NULL)
+					tenant_id,
 				},
 				onDone
 			)
@@ -756,6 +788,10 @@ export class Jobs {
 	 *
 	 * @param uid - The unique identifier (UUID) of the job
 	 * @param withAttempts - Whether to include attempt history (default: false)
+	 * @param options.tenant_id - Optional tenant guard. When set, a job whose
+	 *        `tenant_id` does not match is reported as not-found (`job` is undefined) —
+	 *        the `uid` is a globally-unique UUID, so this is defense-in-depth, not a
+	 *        correctness requirement.
 	 * @returns Object containing the job and optionally its attempt history
 	 *
 	 * @example
@@ -769,10 +805,13 @@ export class Jobs {
 	 */
 	async find(
 		uid: string,
-		withAttempts: boolean = false
+		withAttempts: boolean = false,
+		options: { tenant_id?: string | null } = {}
 	): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
 		await this.#initializeOnce();
-		const job = await this.#withRetry(() => _find(this.#context, uid));
+		const job = await this.#withRetry(() =>
+			_find(this.#context, uid, options?.tenant_id ?? null)
+		);
 		let attempts: null | JobAttempt[] = null;
 
 		if (job && withAttempts) {
@@ -793,6 +832,7 @@ export class Jobs {
 	 * @param options.offset - Number of jobs to skip
 	 * @param options.asc - Sort ascending by created_at (default: descending)
 	 * @param options.sinceMinutesAgo - Only return jobs created within the last N minutes (default: 30)
+	 * @param options.tenant_id - Only return jobs tagged with this tenant (string or array of tenants)
 	 * @returns Array of jobs matching the criteria
 	 *
 	 * @example
@@ -814,18 +854,31 @@ export class Jobs {
 			offset: number | string;
 			asc: number | string | boolean;
 			sinceMinutesAgo: number;
+			tenant_id: string | string[] | null;
 		}> = {}
 	): Promise<Job[]> {
 		await this.#initializeOnce();
 
-		let where = null;
+		// Both conjuncts are quoted via pgQuoteValue (escapes single quotes) and the
+		// `where` is built internally — same trust model as the status filter.
+		const conditions: string[] = [];
+
 		if (status) {
 			if (!Array.isArray(status)) status = [status];
 			status = [...new Set(status.filter(Boolean))];
 			if (status.length) {
-				where = `status IN (${status.map(pgQuoteValue).join(",")})`;
+				conditions.push(`status IN (${status.map(pgQuoteValue).join(",")})`);
 			}
 		}
+
+		const tenantIds = normalizeTenantIds(options?.tenant_id);
+		if (tenantIds) {
+			conditions.push(
+				`tenant_id IN (${tenantIds.map(pgQuoteValue).join(",")})`
+			);
+		}
+
+		const where = conditions.length ? conditions.join(" AND ") : null;
 
 		return await this.#withRetry(() =>
 			_fetchAll(this.#context, where, options)
@@ -842,13 +895,24 @@ export class Jobs {
 	 * should be called periodically by the consumer.
 	 *
 	 * @param maxAllowedRunDurationMinutes - Max running time before a job is reaped (default: 5)
+	 * @param options.tenant_id - Optionally reap only the given tenant(s)' stuck jobs.
+	 *        Omitted => reaps across ALL tenants (today's behavior). NOTE: `autoCleanup`
+	 *        always runs tenant-blind (it reaps every tenant); pass this only on manual
+	 *        `cleanup()` calls when you need tenant-scoped reaping.
 	 * @returns A Promise resolving to the number of jobs reaped
 	 */
-	async cleanup(maxAllowedRunDurationMinutes: number = 5): Promise<number> {
+	async cleanup(
+		maxAllowedRunDurationMinutes: number = 5,
+		options: { tenant_id?: string | string[] | null } = {}
+	): Promise<number> {
 		await this.#initializeOnce();
 
 		const expired = await this.#withRetry(() =>
-			_markExpired(this.#context, maxAllowedRunDurationMinutes)
+			_markExpired(
+				this.#context,
+				maxAllowedRunDurationMinutes,
+				normalizeTenantIds(options?.tenant_id)
+			)
 		);
 
 		// Publish onDone events for every reaped job so consumers (event listeners and
@@ -876,18 +940,29 @@ export class Jobs {
 	 * Collects job statistics for health monitoring.
 	 *
 	 * @param sinceMinutesAgo - Time window for statistics (default: 60 minutes)
+	 * @param options.tenant_id - Optionally restrict the stats to one or more tenants
 	 * @returns Array of statistics grouped by status with counts and durations
 	 *
 	 * @example
 	 * ```typescript
 	 * const stats = await jobs.healthPreview(30);
 	 * // Returns counts and avg durations per status
+	 *
+	 * // Per-tenant stats
+	 * const acme = await jobs.healthPreview(30, { tenant_id: "acme" });
 	 * ```
 	 */
-	async healthPreview(sinceMinutesAgo: number = 60): Promise<HealthPreviewRow[]> {
+	async healthPreview(
+		sinceMinutesAgo: number = 60,
+		options: { tenant_id?: string | string[] | null } = {}
+	): Promise<HealthPreviewRow[]> {
 		await this.#initializeOnce();
 		return await this.#withRetry(() =>
-			_healthPreview(this.#context, sinceMinutesAgo)
+			_healthPreview(
+				this.#context,
+				sinceMinutesAgo,
+				normalizeTenantIds(options?.tenant_id)
+			)
 		);
 	}
 

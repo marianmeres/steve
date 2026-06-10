@@ -11,13 +11,21 @@ import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
  */
 export async function _markExpired(
 	context: JobContext,
-	maxAllowedRunDurationMinutes = 5
+	maxAllowedRunDurationMinutes = 5,
+	tenantIds: string[] | null = null
 ): Promise<Job[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 	const num = Number.isFinite(+maxAllowedRunDurationMinutes)
 		? Math.max(0, Math.round(+maxAllowedRunDurationMinutes))
 		: 5;
+
+	const params: unknown[] = [num];
+	let tenantPredicate = "";
+	if (tenantIds && tenantIds.length) {
+		params.push(tenantIds);
+		tenantPredicate = `AND tenant_id = ANY($${params.length}::varchar[])`;
+	}
 
 	const { rows } = await db.query(
 		`UPDATE ${tableJobs}
@@ -26,8 +34,9 @@ export async function _markExpired(
 			completed_at = NOW()
 		WHERE status = '${JOB_STATUS.RUNNING}'
 			AND started_at < NOW() - ($1::bigint || ' minutes')::interval
+			${tenantPredicate}
 		RETURNING *`,
-		[num]
+		params
 	);
 
 	return rows as Job[];
