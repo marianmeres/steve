@@ -78,7 +78,7 @@ testsRunner([
 			await jobs.start(1);
 
 			//
-			job = (await jobs.find(job.uid)).job;
+			job = (await jobs.find(job.uid)).job!;
 			// console.log(job);
 
 			// out job handler sleeps a bit, so we know, that it must be
@@ -94,7 +94,7 @@ testsRunner([
 			//
 			const r = await jobs.find(job.uid, true);
 			// console.log(r);
-			job = r.job;
+			job = r.job!;
 			const attempts = r.attempts;
 
 			//
@@ -257,7 +257,7 @@ testsRunner([
 			let r = await jobs.find(j.uid);
 
 			// no handler exists
-			assertEquals(r.job.result, { noop: true });
+			assertEquals(r.job!.result, { noop: true });
 
 			// register handler now
 			jobs.setHandler("foo", (_j: Job) => ({ foo: "handler" }));
@@ -269,7 +269,7 @@ testsRunner([
 			r = await jobs.find(j.uid);
 
 			// now must be handler
-			assertEquals(r.job.result, { foo: "handler" });
+			assertEquals(r.job!.result, { foo: "handler" });
 
 			// now unset handler
 			jobs.setHandler("foo", null);
@@ -280,7 +280,7 @@ testsRunner([
 			r = await jobs.find(j.uid);
 
 			// noop again
-			assertEquals(r.job.result, { noop: true });
+			assertEquals(r.job!.result, { noop: true });
 
 			// teardown
 			await jobs.stop();
@@ -365,7 +365,7 @@ testsRunner([
 			// now MUST be done finally
 			assert(jobDone);
 
-			job = (await jobs.find(job.uid)).job;
+			job = (await jobs.find(job.uid)).job!;
 			// console.log(job);
 
 			// start and run time must differ for at least 200 ms
@@ -411,7 +411,7 @@ testsRunner([
 			const r = await jobs.find(job.uid, true);
 			// console.log(r);
 
-			assertEquals(r.job.status, JOB_STATUS.FAILED);
+			assertEquals(r.job!.status, JOB_STATUS.FAILED);
 			assertEquals(r.attempts?.length, 2);
 			assertEquals(r.attempts?.[0].error_message, "Execution timed out");
 			assertEquals(r.attempts?.[1].error_message, "Execution timed out");

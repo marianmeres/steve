@@ -299,6 +299,7 @@ testsRunner([
 				await db.query(
 					`UPDATE ${tablePrefix}__job SET status = 'running',
 						started_at = NOW() - INTERVAL '10 minutes',
+						updated_at = NOW() - INTERVAL '10 minutes',
 						attempts = 1
 					 WHERE id = $1`,
 					[created.id]
@@ -322,7 +323,8 @@ testsRunner([
 			const created = await jobs.create("foo", {});
 			await db.query(
 				`UPDATE ${tablePrefix}__job SET status = 'running',
-					started_at = NOW() - INTERVAL '2 minutes'
+					started_at = NOW() - INTERVAL '2 minutes',
+					updated_at = NOW() - INTERVAL '2 minutes'
 				 WHERE id = $1`,
 				[created.id]
 			);
@@ -330,7 +332,7 @@ testsRunner([
 			assertEquals(reaped, 0);
 
 			const found = await jobs.find(created.uid);
-			assertEquals(found.job.status, JOB_STATUS.RUNNING);
+			assertEquals(found.job!.status, JOB_STATUS.RUNNING);
 		},
 	},
 
@@ -449,7 +451,7 @@ testsRunner([
 					return job?.status === JOB_STATUS.COMPLETED;
 				}, { timeoutMs: 2000 });
 
-				const { job } = await jobs.find(uid);
+				const job = (await jobs.find(uid)).job!;
 				assertEquals(job.status, JOB_STATUS.COMPLETED);
 				assertEquals(job.attempts, 2);
 				const startDelayMs =
@@ -571,9 +573,9 @@ testsRunner([
 				attemptId,
 				new Error("boom")
 			);
-			assertEquals(failed.status, JOB_STATUS.PENDING);
+			assertEquals(failed!.status, JOB_STATUS.PENDING);
 			const deltaMs =
-				new Date(failed.run_at).valueOf() - Date.now();
+				new Date(failed!.run_at).valueOf() - Date.now();
 			assert(
 				deltaMs <= 60 * 60 * 1000 + 5_000,
 				`backoff ${deltaMs}ms exceeds 1h cap`
@@ -614,7 +616,8 @@ testsRunner([
 				const created = await jobs.create("stuck", {});
 				await db.query(
 					`UPDATE ${tablePrefix}__job SET status = 'running',
-						started_at = NOW() - INTERVAL '1 minute', attempts = 1
+						started_at = NOW() - INTERVAL '1 minute',
+						updated_at = NOW() - INTERVAL '1 minute', attempts = 1
 					 WHERE id = $1`,
 					[created.id]
 				);

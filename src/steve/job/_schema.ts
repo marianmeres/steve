@@ -57,7 +57,23 @@ export function _schemaCreate(context: Pick<JobContext, "tableNames">): string {
 		-- must converge any starting state). Nullable, no default => metadata-only on
 		-- a populated table (instant, no rewrite); legacy rows read back NULL. MUST
 		-- precede the tenant index below (the index references the column).
-		ALTER TABLE ${tableJobs} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255);
+		--
+		-- Guarded by a catalog lookup rather than a bare "ADD COLUMN IF NOT EXISTS":
+		-- ALTER TABLE takes an ACCESS EXCLUSIVE lock BEFORE it evaluates IF NOT EXISTS,
+		-- which on every process boot would queue behind any open reader and stall
+		-- every claim behind it. The lookup takes no table lock; the ALTER only runs
+		-- once, on the actual upgrade.
+		DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_attribute
+				WHERE attrelid = to_regclass('${tableJobs}')
+					AND attname = 'tenant_id'
+					AND NOT attisdropped
+			) THEN
+				ALTER TABLE ${tableJobs} ADD COLUMN tenant_id VARCHAR(255);
+			END IF;
+		END $$;
 
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_status_run_at ON ${tableJobs}(status, run_at);
 		CREATE INDEX IF NOT EXISTS idx_${safe(tableJobs)}_uid ON ${tableJobs}(uid);
@@ -76,13 +92,20 @@ export async function _initialize(
 	context: JobContext,
 	hard = false
 ): Promise<void> {
-	const { db } = context;
+	const { db, tableNames } = context;
 
 	const sql = [hard && _schemaDrop(context), _schemaCreate(context)]
 		.filter(Boolean)
 		.join("\n");
 
 	await withTransaction(db, async (client) => {
+		// Serialize concurrent initializers (e.g. N replicas booting at once on a fresh
+		// database) so the CREATE ... IF NOT EXISTS statements cannot race each other
+		// into "duplicate key value violates unique constraint pg_type_typname_nsp_index".
+		// Transaction-scoped: released automatically on COMMIT/ROLLBACK.
+		await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+			`steve:${tableNames.tableJobs}`,
+		]);
 		await client.query(sql);
 	});
 }

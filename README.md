@@ -43,7 +43,8 @@ import { Jobs } from "@marianmeres/steve";
 
 // the manager instance
 const jobs = new Jobs({
-    // pg.Pool or pg.Client
+    // pg.Pool (recommended), or pg.Client (then `start(1)` only — a single
+    // connection cannot run concurrent transactions)
     db,
     // global job handler for all jobs
     jobHandler: (job: Job, signal?: AbortSignal) => {
@@ -101,9 +102,10 @@ const job = await jobs.create(
         // optional tenant to tag the job with, for audit/filtering (see Multitenancy)
         tenant_id: 'acme'
     }, // optional options
-    // optional "onDone" callback for this particular job
+    // optional "onDone" callback for this particular job (in-process only — see
+    // "Listening to job events"; an error thrown here is logged, it never re-runs the job)
     function onDone(job: Job) {
-        // job is either completed or failed... see `job.status`
+        // job is either completed, failed or expired... see `job.status`
     }
 );
 ```
@@ -127,6 +129,17 @@ Note that the `onAttempt` is fired twice for each "physical" attempt - once just
 the job is claimed and is starting the execution (with status `running`) and once when 
 the execution is done (with one of the `completed`, `failed` or `pending`).
 
+**Events are in-process.** They are published by the `Jobs` instance that finalizes the
+job (its own processors, or its own `cleanup()`), not through the database. In a topology
+where one process creates jobs and another runs the workers, listeners registered in the
+creating process never fire — poll `jobs.find(uid)` there instead. The same holds for the
+per-job `onDoneFor` / `onAttemptFor` / `create(..., onDone)` callbacks, which additionally
+stay registered until that job is finalized by this instance (or until `unsubscribeAll()`).
+
+**Listeners are isolated from the job lifecycle.** An exception thrown (or a rejected
+promise returned) by any listener is logged and dropped; it never marks the job as failed
+or re-runs it.
+
 ## Automatic cleanup of stuck jobs
 
 If a worker process crashes mid-job, the row stays in `running` until it is explicitly
@@ -144,6 +157,26 @@ new Jobs({
 });
 ```
 
+The threshold is measured on the **current attempt** (the time it was claimed), so a job
+on its third retry is not reaped just because its first attempt was long ago. Pick a
+threshold above your longest legitimate attempt, or bound attempts with
+`max_attempt_duration_ms`. Should the reaper still fire on a handler that is in fact
+running, that handler's eventual outcome is recorded in the attempt log only: the row stays
+`expired`, its `result` is not stored, and `onDone` is not fired a second time.
+
+## Graceful shutdown (SIGTERM)
+
+With the default `gracefulSigterm: true`, `start()` installs a `SIGTERM` listener that
+calls `stop()` (finishes in-flight jobs, stops the reaper and the health monitor) and
+removes itself. Installing any signal listener suppresses the runtime's default
+"terminate on SIGTERM", so once `stop()` has finished Steve checks whether anybody else is
+still listening: if not, it re-raises `SIGTERM` and the process terminates exactly as it
+would have without Steve. If you have your own `SIGTERM` handler (closing an HTTP server,
+etc.), you own the exit — call `process.exit()` yourself when you are done.
+
+Pass `gracefulSigterm: false` to opt out entirely and call `await jobs.stop()` from your
+own shutdown sequence.
+
 ## Examining the job manually
 
 ```typescript
@@ -152,8 +185,11 @@ jobs.find(
     withAttempts: boolean = false,
     // optional tenant guard - a mismatch is reported as not-found (job is undefined)
     options: { tenant_id?: string | null } = {}
-): Promise<{ job: Job; attempts: null | JobAttempt[] }>;
+): Promise<{ job: Job | undefined; attempts: null | JobAttempt[] }>;
 ```
+
+`job` is `undefined` when not found. A malformed (non-UUID) `uid` is reported the same
+way rather than as a database error, so the method is safe to feed untrusted ids.
 
 ## Listing all jobs
 
@@ -167,6 +203,25 @@ jobs.fetchAll(
         tenant_id: string | string[] | null;
     }> = {}
 ): Promise<Job[]>
+```
+
+## Purging old jobs
+
+Nothing deletes finished jobs automatically, so the `__job` table (and the attempt log,
+which cascades) grows without bound. Call `purge()` periodically with a retention that
+suits your audit needs. Only terminal statuses (`completed`, `failed`, `expired`) can be
+purged; `pending` / `running` rows are never touched.
+
+```typescript
+// delete terminal jobs that finished more than 7 days ago (the default)
+const deleted = await jobs.purge();
+
+// keep failures around longer than successes
+await jobs.purge(24 * 60, { statuses: ['completed'] });
+await jobs.purge(30 * 24 * 60, { statuses: ['failed', 'expired'] });
+
+// one tenant only
+await jobs.purge(7 * 24 * 60, { tenant_id: 'acme' });
 ```
 
 ## Multitenancy (`tenant_id`)
@@ -324,6 +379,30 @@ opt-in; **single-tenant / tenant-unaware users need no code or behavior changes*
 - **No FK and no tenant registry are required.** `create()`, `find()`, `fetchAll()`,
   `healthPreview()` and `cleanup()` gain optional `tenant_id` arguments; omitting them
   preserves today's behavior exactly.
+
+## Upgrading from 3.0
+
+Behavioral fixes. Most code needs no change, but review these:
+
+- **`find()` now returns `job: Job | undefined`.** It always could be `undefined` at
+  runtime; the type said otherwise. Narrow with `if (job)` before use. A malformed
+  (non-UUID) `uid` is reported as not-found instead of raising a Postgres error.
+- **The reaper measures the current attempt.** `cleanup()` / `autoCleanup` compare the
+  threshold against the time the running attempt was claimed (`updated_at`), not against
+  `started_at` (first attempt). Previously a legitimately running retry could be expired
+  merely because its first attempt was long ago.
+- **Terminal states are final.** A handler whose job was meanwhile marked `expired` no
+  longer overwrites it with `completed` / `pending` / `failed`; its outcome goes to the
+  attempt log only, and `onDone` does not fire twice.
+- **Per-job callbacks are isolated.** An exception in `create(..., onDone)`, `onDoneFor`
+  or `onAttemptFor` is logged. Previously it was recorded as a handler failure and could
+  re-run an already-completed job.
+- **`pg.Client` is limited to one processor.** `start(n > 1)` with a `pg.Client` throws.
+- **SIGTERM re-raise.** After the default handler has stopped processing, it re-raises
+  `SIGTERM` when no other listener exists, so the process terminates instead of idling.
+- **`unsubscribeAll()` also clears per-job callbacks.**
+- **`resetHard()` always resets**, even on an already-initialized instance.
+- **New: `purge()`** for deleting old terminal jobs.
 
 ## License
 

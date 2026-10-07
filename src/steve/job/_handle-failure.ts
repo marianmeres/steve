@@ -10,12 +10,21 @@ import { withTransaction } from "../utils/with-transaction.ts";
 /** Cap exponential backoff at 1 hour so high `max_attempts` don't produce absurd delays. */
 const MAX_BACKOFF_MS = 60 * 60 * 1000;
 
+/**
+ * Log the failed attempt and either schedule a retry (`pending` + backoff) or mark the
+ * job `failed` — atomically in one transaction.
+ *
+ * Both job UPDATEs are fenced on `status = 'running' AND attempts = <ours>`: if the
+ * row was finalized by somebody else meanwhile (e.g. the reaper marked it `expired`),
+ * the terminal state is left untouched and `null` is returned. The attempt log row is
+ * written either way.
+ */
 export async function _handleJobFailure(
 	context: JobContext,
 	job: Job,
 	attemptId: number,
 	error: unknown
-): Promise<Job> {
+): Promise<Job | null> {
 	const { db, tableNames } = context;
 	const { tableJobs, tableAttempts } = tableNames;
 
@@ -33,10 +42,12 @@ export async function _handleJobFailure(
 					completed_at = NOW(),
 					updated_at = NOW()
 				WHERE id = $1
+					AND status = '${JOB_STATUS.RUNNING}'
+					AND attempts = $2
 				RETURNING *`,
-				[job.id]
+				[job.id, job.attempts]
 			);
-			return rows[0] as Job;
+			return (rows[0] as Job | undefined) ?? null;
 		}
 
 		// schedule retry with potential backoff
@@ -62,9 +73,11 @@ export async function _handleJobFailure(
 				run_at = NOW() + ($1::bigint || ' milliseconds')::interval,
 				updated_at = NOW()
 			WHERE id = $2
+				AND status = '${JOB_STATUS.RUNNING}'
+				AND attempts = $3
 			RETURNING *`,
-			[backoffMs, job.id]
+			[backoffMs, job.id, job.attempts]
 		);
-		return rows[0] as Job;
+		return (rows[0] as Job | undefined) ?? null;
 	});
 }

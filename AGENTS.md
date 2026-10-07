@@ -10,7 +10,7 @@
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
 - **Runtime**: Deno and Node.js
-- **Version**: 2.0.0
+- **Version**: 3.0.0 (+ unreleased post-review fixes, see README "Upgrading from 3.0")
 - **License**: MIT
 
 ## Purpose
@@ -36,12 +36,14 @@ src/
     │   ├── _schema.ts      # Database schema creation/teardown (transactional)
     │   ├── _create.ts      # Job creation (validates run_at)
     │   ├── _claim-next.ts  # Atomic job claiming (ORDER BY run_at, id)
-    │   ├── _execute.ts     # Job execution orchestration (retry-wrapped finalization)
-    │   ├── _handle-success.ts  # Transactional success finalization
-    │   ├── _handle-failure.ts  # Transactional failure finalization (backoff cap)
-    │   ├── _find.ts        # Job querying (sinceMinutesAgo parameterized)
+    │   ├── _events.ts      # Attempt/done fan-out; per-uid callbacks error-isolated
+    │   ├── _execute.ts     # Job execution orchestration (try/catch covers the handler ONLY)
+    │   ├── _handle-success.ts  # Transactional success finalization (fenced on status+attempts)
+    │   ├── _handle-failure.ts  # Transactional failure finalization (backoff cap; fenced)
+    │   ├── _find.ts        # Job querying (sinceMinutesAgo parameterized; non-UUID uid => not found)
     │   ├── _log-attempt.ts # Attempt logging (accepts client-or-pool)
-    │   ├── _mark-expired.ts  # Reaper; returns affected rows
+    │   ├── _mark-expired.ts  # Reaper on updated_at (current attempt); returns affected rows
+    │   ├── _purge.ts       # Retention: DELETE old terminal jobs (attempt log cascades)
     │   └── _health-preview.ts
     └── utils/
         ├── with-db-retry.ts    # Retry with exponential backoff
@@ -56,6 +58,11 @@ src/
 
 - [ ] Check existing patterns in `src/steve/job/` for job operations
 - [ ] Transactional writes MUST go through `withTransaction` — never `pool.query("BEGIN")` (each pool.query can grab a different connection)
+- [ ] Finalization UPDATEs (`_handle-success.ts`, `_handle-failure.ts`) MUST stay fenced on `status = 'running' AND attempts = $n` — a `null` return means "someone else finalized it; leave it alone"
+- [ ] In `_execute.ts` the try/catch covers the handler call ONLY; never put finalization or consumer callbacks inside it
+- [ ] Consumer callbacks are invoked ONLY via `_events.ts` (`_safeInvoke`) or `#onEvent` — never call a user callback bare
+- [ ] `job/_*.ts` modules are imported by `jobs.ts`: never read `JOB_STATUS` / `BACKOFF_STRATEGY` at module top level (circular-import TDZ) — only inside functions
+- [ ] The reaper (`_mark-expired.ts`) measures `updated_at`, never `started_at`
 - [ ] Run tests: `deno task test`
 - [ ] Ensure PostgreSQL test database is available (see `.env.example`)
 
@@ -72,7 +79,7 @@ From `src/mod.ts`:
 - `checkDbHealth(db, logger?)` - One-time database health check
 
 ### Interfaces
-- `Job` - Job row representation (`status` union includes `"expired"`)
+- `Job` - Job row representation (`status` union includes `"expired"`); `find()` yields `job: Job | undefined`
 - `JobAttempt` - Attempt log entry
 - `JobCreateOptions` - Options for creating jobs
 - `JobCreateDTO` - DTO extending JobCreateOptions with type and payload
@@ -97,11 +104,16 @@ From `src/mod.ts`:
 
 Two tables are created (with configurable prefix). The schema is self-managed and
 idempotent: `_schemaCreate` is re-run inside `withTransaction` on the first init of every
-process (no migration ledger). Most of it is `CREATE TABLE IF NOT EXISTS`, so **breaking
-column changes still require manual migration** — the ONE exception is the additive
-`tenant_id` column, which self-heals onto already-deployed tables via
-`ALTER TABLE ... ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(255)` (metadata-only; legacy
-rows read back NULL). The matching index is **partial** (`WHERE tenant_id IS NOT NULL`) so
+process (no migration ledger), serialized across processes by a transaction-scoped
+`pg_advisory_xact_lock` (so N replicas booting on a fresh DB cannot race the
+`CREATE ... IF NOT EXISTS` statements). In-process, concurrent first calls share one
+`#initPromise`. Most of it is `CREATE TABLE IF NOT EXISTS`, so **breaking column changes
+still require manual migration** — the ONE exception is the additive `tenant_id` column,
+which self-heals onto already-deployed tables. The self-heal is a `DO` block that checks
+`pg_attribute` first and only then runs `ALTER TABLE ... ADD COLUMN` — NOT a bare
+`ADD COLUMN IF NOT EXISTS`, because `ALTER TABLE` takes an ACCESS EXCLUSIVE lock before it
+evaluates `IF NOT EXISTS`, which on every boot would queue behind any open reader and stall
+all claims behind it. The matching index is **partial** (`WHERE tenant_id IS NOT NULL`) so
 a tenant-unaware deployment pays ~zero write cost. There is intentionally **no FK** on
 `tenant_id` (see Tenancy below).
 
@@ -143,7 +155,14 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 - Uses `FOR UPDATE SKIP LOCKED` for atomic claiming across workers
 - `ORDER BY run_at, id` — fair for mixed scheduled/immediate jobs
 - `started_at` is set with `COALESCE(started_at, NOW())` → preserved across retries
+- `updated_at = NOW()` on every claim and untouched during execution → for a `running` row it is "when the CURRENT attempt started" (the reaper's reference)
 - Poll sleep is jittered ±25% to avoid thundering herd
+- Handler dispatch is a `Map` lookup (`#jobHandlers.get(type)`), so types like `constructor` / `__proto__` can't resolve to `Object.prototype` members
+
+### Execution & Finalization (`_execute.ts`)
+- `try/catch` wraps the handler call ONLY. Finalization and callback fan-out run outside it, so a consumer-callback error can never be misattributed to the job
+- `_handleJobSuccess` / `_handleJobFailure` UPDATE `WHERE id = $1 AND status = 'running' AND attempts = $n` and return `Job | null`. `null` = somebody else finalized the row meanwhile (reaper → `expired`): the attempt log row is still written, a warning is logged, no events are published, the terminal state stays
+- Consequence: `expired` is truly terminal; a late handler never resurrects a job and `onDone` fires at most once per terminal transition
 
 ### Transactions
 - `_handleJobSuccess`, `_handleJobFailure`, `_initialize`, `_uninstall` all use `withTransaction()`
@@ -172,17 +191,27 @@ PENDING → RUNNING → COMPLETED
 
 ### Cleanup / Expired Reaper
 - `jobs.cleanup(maxMinutes?)` marks stuck-`running` rows as `expired`, sets `completed_at`, and fires `onDone` for each
-- Pass `autoCleanup: true` (or a config) to run the reaper automatically on a timer (default: every 60s, threshold 5min)
-- Expired status is terminal (no auto-retry) — work may be stale by the time we notice
+- "Stuck" = `updated_at < NOW() - threshold` (current attempt's claim time). NEVER `started_at`: that is the first attempt's start and would reap legitimate retries whose cumulative backoff exceeds the threshold
+- Pass `autoCleanup: true` (or a config) to run the reaper automatically on a timer (default: every 60s, threshold 5min). `stop()` awaits an in-flight tick; a tick that outlives its `stop()` sees a bumped `#lifecycleGen` and does not reschedule
+- Expired status is terminal (no auto-retry, never overwritten by a late handler) — work may be stale by the time we notice
+
+### Retention (`purge`)
+- Nothing deletes finished jobs automatically. `jobs.purge(olderThanMinutes?, { statuses?, tenant_id? })` DELETEs terminal rows by `COALESCE(completed_at, updated_at)`; attempt log cascades via FK
+- Only `completed` / `failed` / `expired` are purgeable; anything else throws `TypeError`. All values bound, never interpolated
 
 ### Graceful Shutdown
 - `start()` is idempotent (second call is a no-op with a warning) and THROWS on init failure
+- `start(n > 1)` THROWS when `db` is a `pg.Client`: concurrent `withTransaction` calls on one connection interleave BEGIN/COMMIT/ROLLBACK (verified: one caller's ROLLBACK discards the other's uncommitted writes). Pool for concurrency
 - SIGTERM handler is added on `start()` and removed on `stop()` (no listener leak across instances)
-- `stop()` awaits currently-running jobs before returning
+- After the SIGTERM-triggered `stop()` resolves, the handler re-raises `SIGTERM` via `process.kill(process.pid, "SIGTERM")` IF `process.listenerCount("SIGTERM") === 0`. Reason: any installed listener suppresses the runtime's default terminate-on-SIGTERM, so without this the process idles until SIGKILL. Consumers with their own listener own the exit
+- `stop()` awaits currently-running jobs (and an in-flight auto-cleanup tick) before returning
+- `resetHard()` always runs `_initialize(hard)`, even on an initialized instance
 
 ### Events
+- ALL events are in-process: published by the instance that finalizes the job (its processors / its `cleanup()`), never via the DB. A process that only creates jobs sees nothing; per-uid registrations there leak until `unsubscribeAll()` — documented, not solved
+- Type-keyed subscribers are wrapped in `#onEvent` (try/await/catch); per-uid callbacks (`onDoneFor`, `onAttemptFor`, `create(..., onDone)`) go through `_events.ts` `_safeInvoke` (sync throw caught, returned promise gets a rejection handler). A consumer error is logged and dropped — it never touches the job
 - `#onEventWraps` is per-instance and keyed by `(type, cb)` — safe for callbacks shared across Jobs instances and for multi-type subscribe+unsubscribe
-- `unsubscribeAll()` clears both the pubsubs AND the internal wrap registry
+- `unsubscribeAll()` clears the pubsubs, the internal wrap registry AND both per-uid maps
 
 ### Tenancy (`tenant_id`)
 - **Optional, audit-only, no FK.** `tenant_id` is a nullable `VARCHAR(255)` tag on `__job` only (NOT on the attempt-log table — reachable via `job_id`). It follows the ecosystem `tenant_id` convention but deliberately omits the `tenantIdFk`/registry coupling: a job queue is infrastructure, and `ON DELETE CASCADE` would destroy the very audit trail the column exists for.
@@ -221,7 +250,8 @@ Test files:
 - `tests/jobs.test.ts` — core Jobs class behavior
 - `tests/db-resilience.test.ts` — retry and health monitor
 - `tests/fixes.test.ts` — regression guards for v2.0.0 fixes (transactions, injection, event isolation, lifecycle, reaper, AbortSignal, backoff cap, etc.)
-- `tests/tenant.test.ts` — optional `tenant_id` (tag/default-null, fetchAll/find/healthPreview/cleanup filters, tenant-blind claiming, and the `ADD COLUMN IF NOT EXISTS` self-heal on a pre-tenant table)
+- `tests/tenant.test.ts` — optional `tenant_id` (tag/default-null, fetchAll/find/healthPreview/cleanup filters, tenant-blind claiming, and the `tenant_id` self-heal on a pre-tenant table)
+- `tests/fixes-v3.test.ts` — regression guards for the post-3.0 review fixes (reaper on `updated_at`, fenced finalization, per-uid callback isolation, prototype-safe dispatch, `pg.Client` single processor, init dedupe / no boot-time exclusive lock, `purge`, `find` not-found, `unsubscribeAll`, SIGTERM re-raise via subprocess `tests/_sigterm-child.ts`)
 
 ## Common Patterns
 
@@ -292,6 +322,6 @@ const jobs = new Jobs({
 | Transaction utility | `src/steve/utils/with-transaction.ts` |
 | Health utility | `src/steve/utils/db-health.ts` |
 | Timeout/AbortSignal | `src/steve/utils/with-timeout.ts` |
-| Tests | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts` |
+| Tests | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
 | Example server | `example/server.ts` |
 | Config | `deno.json` |

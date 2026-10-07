@@ -8,28 +8,39 @@ function coerceMinutes(v: unknown, fallback: number): number {
 	return Math.max(0, Math.trunc(n));
 }
 
-/** Internal select one (optional tenant guard; no-tenant path is byte-identical). */
+const UUID_RE =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Internal select one (optional tenant guard; no-tenant path is byte-identical).
+ *
+ * `uid` is bound, but the column is `UUID`: a malformed value would make Postgres
+ * raise "invalid input syntax for type uuid" instead of returning no row. It is
+ * treated as a plain not-found so `find()` is safe to call with untrusted ids.
+ */
 export async function _find(
 	context: JobContext,
 	uid: string,
 	tenantId: string | null = null
-): Promise<Job> {
+): Promise<Job | undefined> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
+
+	if (typeof uid !== "string" || !UUID_RE.test(uid)) return undefined;
 
 	if (tenantId == null) {
 		const { rows } = await db.query(
 			`SELECT * FROM ${tableJobs} WHERE uid = $1`,
 			[uid]
 		);
-		return rows[0] as Job;
+		return rows[0] as Job | undefined;
 	}
 
 	const { rows } = await db.query(
 		`SELECT * FROM ${tableJobs} WHERE uid = $1 AND tenant_id = $2`,
 		[uid, tenantId]
 	);
-	return rows[0] as Job;
+	return rows[0] as Job | undefined;
 }
 
 /** Internal select all */

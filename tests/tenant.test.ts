@@ -39,8 +39,8 @@ testsRunner([
 			assertEquals(tagged.tenant_id, "acme");
 
 			// round-trips via find
-			assertEquals((await jobs.find(global.uid)).job.tenant_id, null);
-			assertEquals((await jobs.find(tagged.uid)).job.tenant_id, "acme");
+			assertEquals((await jobs.find(global.uid)).job!.tenant_id, null);
+			assertEquals((await jobs.find(tagged.uid)).job!.tenant_id, "acme");
 
 			// empty string / null are treated as "global" (NULL)
 			const e1 = await jobs.create("e", {}, { tenant_id: "" });
@@ -113,7 +113,7 @@ testsRunner([
 			for (let i = 0; i < 20 && seen.length === 0; i++) await sleep(50);
 			await jobs.stop();
 
-			const done = (await jobs.find(job.uid)).job;
+			const done = (await jobs.find(job.uid)).job!;
 			assertEquals(done.status, JOB_STATUS.COMPLETED);
 			// the handler observed the tenant_id, and it survives completion
 			assertEquals(seen[0]?.tenant_id, "acme");
@@ -151,7 +151,8 @@ testsRunner([
 			await db.query(
 				`UPDATE ${tableJobs}
 				 SET status = '${JOB_STATUS.RUNNING}',
-				     started_at = NOW() - INTERVAL '60 minutes'
+				     started_at = NOW() - INTERVAL '60 minutes',
+				     updated_at = NOW() - INTERVAL '60 minutes'
 				 WHERE uid IN ($1, $2)`,
 				[a.uid, g.uid],
 			);
@@ -159,9 +160,9 @@ testsRunner([
 			const reaped = await jobs.cleanup(5, { tenant_id: "acme" });
 			assertEquals(reaped, 1);
 
-			assertEquals((await jobs.find(a.uid)).job.status, JOB_STATUS.EXPIRED);
+			assertEquals((await jobs.find(a.uid)).job!.status, JOB_STATUS.EXPIRED);
 			// globex's stuck job is NOT reaped by the acme-scoped cleanup
-			assertEquals((await jobs.find(g.uid)).job.status, JOB_STATUS.RUNNING);
+			assertEquals((await jobs.find(g.uid)).job!.status, JOB_STATUS.RUNNING);
 		},
 	},
 	{

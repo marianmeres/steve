@@ -77,6 +77,7 @@ Starts job processing with the specified number of concurrent workers.
 
 **Behavior:**
 - **Throws** if initialization fails (e.g., database unreachable) so callers can fail fast.
+- **Throws** if `db` is a `pg.Client` and `processorsCount > 1` — a single connection cannot run concurrent transactions. Use a `pg.Pool` for concurrency.
 - **Idempotent** — calling `start()` while already running is a no-op with a warning log; it will NOT spawn additional processors. To restart, call `stop()` first.
 
 **Example:**
@@ -92,7 +93,9 @@ await jobs.start(4); // Start with 4 concurrent workers
 async stop(): Promise<void>
 ```
 
-Gracefully stops all running job processors. Waits for currently executing jobs to complete, stops the health monitor and auto-cleanup loop, and removes the SIGTERM listener.
+Gracefully stops all running job processors. Waits for currently executing jobs to complete (and for an in-flight auto-cleanup tick), stops the health monitor and auto-cleanup loop, and removes the SIGTERM listener.
+
+When `stop()` was triggered by the built-in `SIGTERM` handler (`gracefulSigterm: true`), Steve re-raises `SIGTERM` afterwards if no other `SIGTERM` listener exists, so the process terminates as it would have without Steve. Consumers with their own `SIGTERM` handler own the exit.
 
 ---
 
@@ -113,7 +116,7 @@ Creates a new job and adds it to the processing queue.
 - `type` - Job type identifier used to route to the appropriate handler
 - `payload` - Custom data to pass to the job handler (default: `{}`)
 - `options` - Configuration for retry, timeout, scheduling, and the optional `tenant_id` tag (see [JobCreateOptions](#jobcreateoptions))
-- `onDone` - Callback executed when this specific job completes
+- `onDone` - Callback executed when this specific job completes. **In-process only**: fires only if a processor of this instance executes the job. Errors thrown or rejected by it are logged and never affect the job.
 
 **Returns:** The created `Job` object with its assigned UID
 
@@ -136,10 +139,10 @@ async find(
   uid: string,
   withAttempts?: boolean,
   options?: { tenant_id?: string | null }
-): Promise<{ job: Job; attempts: null | JobAttempt[] }>
+): Promise<{ job: Job | undefined; attempts: null | JobAttempt[] }>
 ```
 
-Finds a job by its unique identifier.
+Finds a job by its unique identifier. `job` is `undefined` when not found; a malformed (non-UUID) `uid` is reported as not-found rather than as a database error.
 
 **Parameters:**
 - `uid` - The unique identifier (UUID) of the job
@@ -254,6 +257,8 @@ onDone(
 
 Subscribes to job completion events for specific job types.
 
+**In-process only**: events are published by the instance that finalizes the job (its own processors / its own `cleanup()`), not through the database. A subscriber in a process that only creates jobs never sees them. Errors thrown or rejected by the callback are logged and never affect the job.
+
 **Parameters:**
 - `type` - Job type or array of types to subscribe to
 - `cb` - Callback function to execute on job completion
@@ -285,7 +290,7 @@ onAttempt(
 ): Unsubscriber
 ```
 
-Subscribes to job attempt events for specific job types. The callback is executed on each attempt (both start and end).
+Subscribes to job attempt events for specific job types. The callback is executed on each attempt (both start and end). In-process only, errors isolated — see [onDone](#ondone).
 
 ---
 
@@ -295,7 +300,7 @@ Subscribes to job attempt events for specific job types. The callback is execute
 onDoneFor(jobUid: string, cb: (job: Job) => void): void
 ```
 
-Registers a callback for when a specific job completes.
+Registers a callback for when a specific job completes. In-process only: fires only if this instance finalizes the job (its own processor or its own `cleanup()`); the registration lives until then or until `unsubscribeAll()`. Errors thrown or rejected by the callback are logged and never affect the job.
 
 ---
 
@@ -305,7 +310,7 @@ Registers a callback for when a specific job completes.
 onAttemptFor(jobUid: string, cb: (job: Job) => void): void
 ```
 
-Registers a callback for each attempt of a specific job.
+Registers a callback for each attempt of a specific job. In-process only, errors isolated — see [onDoneFor](#ondonefor).
 
 ---
 
@@ -320,6 +325,8 @@ async cleanup(
 
 Marks jobs stuck in `running` (e.g., because a worker crashed mid-execution) as `expired`, sets `completed_at`, and publishes `onDone` events for each reaped job. Returns the number of jobs reaped.
 
+The threshold is measured on the **current attempt** — the time the running attempt was claimed (`updated_at`) — never on `started_at` (first attempt), so a retry is not reaped because its first attempt was long ago. `expired` is final: a handler that was in fact still running finds its row no longer `running` at finalization and leaves it alone (its outcome is recorded in the attempt log only; `onDone` does not fire twice).
+
 Called automatically when `autoCleanup` is enabled on the Jobs instance; otherwise should be called periodically by the consumer.
 
 **Parameters:**
@@ -332,6 +339,38 @@ Called automatically when `autoCleanup` is enabled on the Jobs instance; otherwi
 ```typescript
 const reaped = await jobs.cleanup(10);
 console.log(`Reaped ${reaped} stuck jobs`);
+```
+
+---
+
+#### purge
+
+```typescript
+async purge(
+  olderThanMinutes?: number,
+  options?: {
+    statuses?: Job["status"][];
+    tenant_id?: string | string[] | null;
+  }
+): Promise<number>
+```
+
+Deletes terminal jobs (and, via `ON DELETE CASCADE`, their attempt-log rows) whose `completed_at` is older than `olderThanMinutes`. Nothing purges automatically — without this the job table grows without bound. Call it periodically (e.g. from a cron job).
+
+Only terminal statuses can be purged. Passing `pending` or `running` throws a `TypeError`.
+
+**Parameters:**
+- `olderThanMinutes` - Retention window (default: `7 * 24 * 60`, i.e. 7 days)
+- `options.statuses` - Which terminal statuses to purge (default: `["completed", "failed", "expired"]`)
+- `options.tenant_id` - Optionally purge only the given tenant(s)' jobs
+
+**Returns:** Number of jobs deleted
+
+**Example:**
+```typescript
+// drop completed jobs older than a day, keep failures for a month
+await jobs.purge(24 * 60, { statuses: ["completed"] });
+await jobs.purge(30 * 24 * 60, { statuses: ["failed", "expired"] });
 ```
 
 ---
@@ -381,7 +420,7 @@ Manually triggers a database health check.
 async resetHard(): Promise<void>
 ```
 
-Reinitializes the database schema by dropping and recreating tables.
+Reinitializes the database schema by dropping and recreating tables. Always runs, even on an already-initialized instance.
 
 **Warning:** This will delete all job data. Intended for testing only.
 
@@ -405,7 +444,7 @@ Removes all database tables created by Steve.
 unsubscribeAll(): void
 ```
 
-Removes all event listeners. Primarily used in tests.
+Removes all event listeners: the type-keyed `onDone` / `onAttempt` subscriptions **and** the per-job callbacks registered via `onDoneFor`, `onAttemptFor` and `create(..., onDone)`. Primarily used in tests.
 
 ---
 
@@ -489,13 +528,13 @@ Configuration options for the Jobs manager.
 
 ```typescript
 interface JobsOptions {
-  db: pg.Pool | pg.Client;       // PostgreSQL connection (required)
+  db: pg.Pool | pg.Client;       // PostgreSQL connection (required). pg.Client => start(1) only
   jobHandler?: JobHandler;       // Global job handler
   jobHandlers?: JobHandlersMap;  // Map of handlers by type
   tablePrefix?: string;          // Table name prefix (e.g., "myschema.")
   pollTimeoutMs?: number;        // Polling interval (default: 1000, ±25% jitter)
   logger?: Logger;               // Logger instance
-  gracefulSigterm?: boolean;     // Enable SIGTERM handling (default: true)
+  gracefulSigterm?: boolean;     // SIGTERM => stop(), then re-raise if no other listener (default: true)
   dbRetry?: DbRetryOptions | boolean;  // Enable retry on transient failures
   dbHealthCheck?: boolean | {    // Enable health monitoring
     intervalMs?: number;
@@ -515,7 +554,7 @@ Periodic reaper configuration for marking stuck-`running` jobs as `expired`.
 ```typescript
 interface AutoCleanupOptions {
   intervalMs?: number;                    // Check interval (default: 60000)
-  maxAllowedRunDurationMinutes?: number;  // Stuck-threshold (default: 5)
+  maxAllowedRunDurationMinutes?: number;  // Stuck-threshold, measured on the current attempt (default: 5)
 }
 ```
 

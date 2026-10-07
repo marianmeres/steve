@@ -4,11 +4,13 @@ import process from "node:process";
 import type pg from "pg";
 import { _claimNextJob } from "./job/_claim-next.ts";
 import { _create } from "./job/_create.ts";
+import { _publishDone } from "./job/_events.ts";
 import { _executeJob } from "./job/_execute.ts";
 import { _fetchAll, _find } from "./job/_find.ts";
 import { _healthPreview } from "./job/_health-preview.ts";
 import { _logAttemptFetchAll } from "./job/_log-attempt.ts";
 import { _markExpired } from "./job/_mark-expired.ts";
+import { _purge } from "./job/_purge.ts";
 import {
 	_initialize,
 	_schemaCreate,
@@ -18,6 +20,7 @@ import {
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 import { withDbRetry, type DbRetryOptions } from "./utils/with-db-retry.ts";
+import { isPool } from "./utils/with-transaction.ts";
 import {
 	checkDbHealth,
 	DbHealthMonitor,
@@ -373,7 +376,9 @@ export class Jobs {
 
 	#db: pg.Pool | pg.Client;
 	#jobHandler: JobHandler | undefined;
-	#jobHandlers: JobHandlersMap;
+	// A Map (not a plain object) so that job types such as "constructor" or
+	// "__proto__" can never resolve to Object.prototype members and be invoked.
+	#jobHandlers: Map<string, JobHandler>;
 	#logger: Logger;
 	#onDoneCallbacks: Map<string, Set<JobAwareFn>> = new Map();
 	#onAttemptCallbacks: Map<string, Set<JobAwareFn>> = new Map();
@@ -384,6 +389,13 @@ export class Jobs {
 	#isShuttingDown = false;
 	#isRunning = false;
 	#wasInitialized = false;
+	// In-flight schema initialization, so concurrent first calls (e.g. `start()` and
+	// `create()` racing at boot) share one `_initialize` instead of running two.
+	#initPromise: Promise<void> | null = null;
+	// Bumped by every stop(); an auto-cleanup tick that outlives its stop() sees a
+	// stale generation and does not reschedule itself.
+	#lifecycleGen = 0;
+	#autoCleanupInFlight: Promise<void> | null = null;
 	#activeJobs: Set<number> = new Set();
 	#jobProcessors: Promise<void>[] = [];
 
@@ -423,7 +435,11 @@ export class Jobs {
 
 		this.#db = db;
 		this.#jobHandler = jobHandler;
-		this.#jobHandlers = jobHandlers;
+		this.#jobHandlers = new Map(
+			Object.entries(jobHandlers ?? {}).filter(
+				(e): e is [string, JobHandler] => typeof e[1] === "function"
+			)
+		);
 		this.#logger = logger;
 		this.pollTimeoutMs = pollTimeoutMs;
 		this.tablePrefix = tablePrefix;
@@ -473,12 +489,28 @@ export class Jobs {
 		return await fn();
 	}
 
-	async #initializeOnce(hard?: boolean | undefined) {
-		if (!this.#wasInitialized) {
-			await this.#withRetry(() => _initialize(this.#context, !!hard));
-			this.#wasInitialized = true;
+	async #initializeOnce(hard: boolean = false): Promise<void> {
+		if (hard) {
+			// a hard reset ALWAYS runs (and doubles as this instance's initialization)
+			this.#initPromise = this.#withRetry(() => _initialize(this.#context, true));
+		} else if (this.#wasInitialized) {
+			return;
+		} else if (!this.#initPromise) {
+			this.#initPromise = this.#withRetry(() => _initialize(this.#context, false));
+		}
+
+		const p = this.#initPromise;
+		try {
+			await p;
+		} catch (e) {
+			// let a later call retry instead of replaying a failed promise forever
+			if (this.#initPromise === p) this.#initPromise = null;
+			throw e;
+		}
+		if (!this.#wasInitialized || hard) {
 			this.#logger?.debug?.(`System initialized${hard ? " (hard)" : ""} `);
 		}
+		this.#wasInitialized = true;
 	}
 
 	/** Registers the SIGTERM handler exactly once per start/stop cycle. */
@@ -486,8 +518,16 @@ export class Jobs {
 		if (!this.gracefulSigterm || this.#sigtermHandler) return;
 		this.#sigtermHandler = () => {
 			this.#logger?.debug?.(`SIGTERM detected...`);
-			// not calling process.exit here... that is the consumer's responsibility
-			void this.stop();
+			void this.stop().then(() => {
+				// Installing ANY listener suppresses the runtime's default "terminate on
+				// SIGTERM". stop() has removed ours; if nobody else is listening, the
+				// process would now just sit there — so re-raise to restore the default
+				// outcome. If the consumer has their own listener, they own the exit.
+				if (process.listenerCount("SIGTERM") === 0) {
+					this.#logger?.debug?.(`Re-raising SIGTERM (no other listeners)...`);
+					process.kill(process.pid, "SIGTERM");
+				}
+			});
 		};
 		process.on("SIGTERM", this.#sigtermHandler);
 	}
@@ -525,7 +565,7 @@ export class Jobs {
 							this.#context,
 							job,
 							// try handler by type, fallback to global, fallback to noop
-							this.#jobHandlers[job.type] ?? this.#jobHandler ?? noopHandler
+							this.#jobHandlers.get(job.type) ?? this.#jobHandler ?? noopHandler
 						);
 					} finally {
 						this.#activeJobs.delete(job.id);
@@ -573,16 +613,23 @@ export class Jobs {
 	#scheduleAutoCleanup() {
 		if (!this.#autoCleanupOptions || this.#isShuttingDown) return;
 		const { intervalMs = 60_000 } = this.#autoCleanupOptions;
+		const gen = this.#lifecycleGen;
 
-		this.#autoCleanupTimeoutId = setTimeout(async () => {
-			try {
-				await this.cleanup(
-					this.#autoCleanupOptions?.maxAllowedRunDurationMinutes
-				);
-			} catch (e) {
-				this.#logger?.error?.(`Auto cleanup failed: ${e}`);
-			}
-			if (!this.#isShuttingDown) this.#scheduleAutoCleanup();
+		this.#autoCleanupTimeoutId = setTimeout(() => {
+			this.#autoCleanupTimeoutId = null;
+			const tick = this.cleanup(
+				this.#autoCleanupOptions?.maxAllowedRunDurationMinutes
+			)
+				.then(() => {})
+				.catch((e) => this.#logger?.error?.(`Auto cleanup failed: ${e}`))
+				.finally(() => {
+					this.#autoCleanupInFlight = null;
+					// only reschedule if no stop() happened while this tick was running
+					if (gen === this.#lifecycleGen && !this.#isShuttingDown) {
+						this.#scheduleAutoCleanup();
+					}
+				});
+			this.#autoCleanupInFlight = tick;
 		}, intervalMs);
 	}
 
@@ -602,7 +649,7 @@ export class Jobs {
 	 * @param type - The job type to check
 	 */
 	hasHandler(type: string): boolean {
-		return typeof this.#jobHandlers[type] === "function" || typeof this.#jobHandler === "function";
+		return this.#jobHandlers.has(type) || typeof this.#jobHandler === "function";
 	}
 
 	/**
@@ -624,9 +671,9 @@ export class Jobs {
 	 */
 	setHandler(type: string, handler: JobHandler | undefined | null): Jobs {
 		if (typeof handler === "function") {
-			this.#jobHandlers[type] = handler;
+			this.#jobHandlers.set(type, handler);
 		} else {
-			delete this.#jobHandlers[type];
+			this.#jobHandlers.delete(type);
 		}
 		return this;
 	}
@@ -637,7 +684,7 @@ export class Jobs {
 	 * Resets both the type-specific handlers map and the global handler.
 	 */
 	resetHandlers(): void {
-		this.#jobHandlers = {};
+		this.#jobHandlers = new Map();
 		this.#jobHandler = undefined;
 	}
 
@@ -652,8 +699,12 @@ export class Jobs {
 	 *
 	 * Throws if initialization fails (e.g., database unreachable) so callers can fail fast.
 	 *
+	 * Throws if `db` is a `pg.Client` and `processorsCount > 1`: concurrent processors
+	 * would interleave their BEGIN/COMMIT/ROLLBACK on the single connection, which is not
+	 * a transaction at all. Use a `pg.Pool` for concurrency.
+	 *
 	 * @param processorsCount - Number of concurrent job processors (default: 2)
-	 * @throws If database initialization fails
+	 * @throws If database initialization fails, or on an unsupported db/processors combination
 	 *
 	 * @example
 	 * ```typescript
@@ -672,6 +723,14 @@ export class Jobs {
 				`Jobs.start() called while already running — ignored.`
 			);
 			return;
+		}
+		if (!isPool(this.#db) && processorsCount > 1) {
+			const msg =
+				`A pg.Client supports a single processor only (requested ${processorsCount}): ` +
+				`concurrent transactions would interleave on the one connection. ` +
+				`Pass a pg.Pool for concurrency.`;
+			this.#logger?.error?.(msg);
+			throw new Error(msg);
 		}
 
 		await this.#initializeOnce();
@@ -709,8 +768,11 @@ export class Jobs {
 	 * @returns A Promise that resolves when all processors have stopped
 	 */
 	async stop(): Promise<void> {
-		// Stop auto cleanup first so it doesn't schedule anything new
+		// Stop auto cleanup first so it doesn't schedule anything new; a tick that is
+		// mid-flight right now sees the bumped generation and will not reschedule.
+		this.#lifecycleGen++;
 		this.#stopAutoCleanup();
+		if (this.#autoCleanupInFlight) await this.#autoCleanupInFlight;
 
 		// Stop health monitor
 		if (this.#healthMonitor) {
@@ -736,7 +798,10 @@ export class Jobs {
 	 * @param type - Job type identifier used to route to the appropriate handler
 	 * @param payload - Custom data to pass to the job handler
 	 * @param options - Optional configuration for retry, timeout, and scheduling
-	 * @param onDone - Optional callback executed when this specific job completes
+	 * @param onDone - Optional callback executed when this specific job completes.
+	 *        **In-process only**: it fires only if a processor of THIS instance executes
+	 *        the job. In a topology where another process runs the workers it never
+	 *        fires — poll `find()` there instead.
 	 * @returns The created Job object with its assigned UID
 	 *
 	 * @example
@@ -792,7 +857,8 @@ export class Jobs {
 	 *        `tenant_id` does not match is reported as not-found (`job` is undefined) —
 	 *        the `uid` is a globally-unique UUID, so this is defense-in-depth, not a
 	 *        correctness requirement.
-	 * @returns Object containing the job and optionally its attempt history
+	 * @returns Object containing the job (`undefined` when not found — also for a
+	 *          malformed, non-UUID `uid`) and optionally its attempt history
 	 *
 	 * @example
 	 * ```typescript
@@ -807,7 +873,7 @@ export class Jobs {
 		uid: string,
 		withAttempts: boolean = false,
 		options: { tenant_id?: string | null } = {}
-	): Promise<{ job: Job; attempts: null | JobAttempt[] }> {
+	): Promise<{ job: Job | undefined; attempts: null | JobAttempt[] }> {
 		await this.#initializeOnce();
 		const job = await this.#withRetry(() =>
 			_find(this.#context, uid, options?.tenant_id ?? null)
@@ -917,23 +983,53 @@ export class Jobs {
 
 		// Publish onDone events for every reaped job so consumers (event listeners and
 		// per-uid callbacks from onDoneFor / create()'s onDone) observe terminal state.
-		for (const job of expired) {
-			this.#pubsubDone.publish(job.type, job);
-			const perUid = this.#onDoneCallbacks.get(job.uid);
-			if (perUid) {
-				for (const cb of perUid) {
-					try {
-						cb(job);
-					} catch (e) {
-						this.#logger?.error?.(`cleanup onDone callback: ${e}`);
-					}
-				}
-				this.#onDoneCallbacks.delete(job.uid);
-				this.#onAttemptCallbacks.delete(job.uid);
-			}
-		}
+		for (const job of expired) _publishDone(this.#context, job);
 
 		return expired.length;
+	}
+
+	/**
+	 * Deletes terminal jobs (and, via cascade, their attempt-log rows) older than
+	 * `olderThanMinutes`, measured on `completed_at`. Nothing purges automatically —
+	 * without this the job table grows without bound. Call it periodically (e.g. from a
+	 * cron job) with a retention that suits your audit needs.
+	 *
+	 * Only terminal statuses can be purged; passing `pending` or `running` throws.
+	 *
+	 * @param olderThanMinutes - Retention window (default: 7 days)
+	 * @param options.statuses - Which terminal statuses to purge (default: all three —
+	 *        `completed`, `failed`, `expired`)
+	 * @param options.tenant_id - Optionally purge only the given tenant(s)' jobs
+	 * @returns A Promise resolving to the number of jobs deleted
+	 *
+	 * @example
+	 * ```typescript
+	 * // drop completed jobs older than a day, keep failures around for a week
+	 * await jobs.purge(24 * 60, { statuses: ["completed"] });
+	 * await jobs.purge(7 * 24 * 60, { statuses: ["failed", "expired"] });
+	 * ```
+	 */
+	async purge(
+		olderThanMinutes: number = 7 * 24 * 60,
+		options: {
+			statuses?: Job["status"][];
+			tenant_id?: string | string[] | null;
+		} = {}
+	): Promise<number> {
+		await this.#initializeOnce();
+		const statuses = options?.statuses ?? [
+			JOB_STATUS.COMPLETED,
+			JOB_STATUS.FAILED,
+			JOB_STATUS.EXPIRED,
+		];
+		return await this.#withRetry(() =>
+			_purge(
+				this.#context,
+				olderThanMinutes,
+				statuses,
+				normalizeTenantIds(options?.tenant_id)
+			)
+		);
 	}
 
 	/**
@@ -994,6 +1090,10 @@ export class Jobs {
 	 * The callback is executed once when the job with the given UID
 	 * reaches a final state (completed, failed, or expired).
 	 *
+	 * **In-process only**: fires only if THIS instance finalizes the job (its own
+	 * processor, or its own `cleanup()`). Errors thrown or rejected by the callback are
+	 * logged and never affect the job.
+	 *
 	 * @param jobUid - The unique identifier of the job to watch
 	 * @param cb - Callback function to execute on completion
 	 */
@@ -1008,6 +1108,9 @@ export class Jobs {
 	 * Registers a callback for each attempt of a specific job.
 	 *
 	 * The callback is executed on each attempt of the job with the given UID.
+	 *
+	 * **In-process only**: fires only if a processor of THIS instance executes the job.
+	 * Errors thrown or rejected by the callback are logged and never affect the job.
 	 *
 	 * @param jobUid - The unique identifier of the job to watch
 	 * @param cb - Callback function to execute on each attempt
@@ -1024,6 +1127,10 @@ export class Jobs {
 	 *
 	 * The callback is executed when any job of the specified type(s) completes
 	 * (success, terminal failure, or expiration).
+	 *
+	 * **In-process only**: events are published by the instance that finalizes the job
+	 * (its own processors / its own `cleanup()`), not through the database. A subscriber
+	 * in a process that only creates jobs never sees them.
 	 *
 	 * @param type - Job type or array of types to subscribe to
 	 * @param cb - Callback function to execute on job completion
@@ -1055,6 +1162,8 @@ export class Jobs {
 	 *
 	 * The callback is executed on each attempt of jobs with the specified type(s).
 	 * This includes both the start and end of each attempt.
+	 *
+	 * **In-process only**: see `onDone`.
 	 *
 	 * @param type - Job type or array of types to subscribe to
 	 * @param cb - Callback function to execute on each attempt
@@ -1126,7 +1235,9 @@ export class Jobs {
 	}
 
 	/**
-	 * Removes all event listeners.
+	 * Removes all event listeners: the type-keyed `onDone`/`onAttempt` subscriptions AND
+	 * the per-uid callbacks registered via `onDoneFor`, `onAttemptFor` and
+	 * `create(..., onDone)`.
 	 *
 	 * Primarily used in tests to clean up between test cases.
 	 */
@@ -1134,6 +1245,8 @@ export class Jobs {
 		this.#pubsubAttempt.unsubscribeAll();
 		this.#pubsubDone.unsubscribeAll();
 		this.#onEventWraps.clear();
+		this.#onDoneCallbacks.clear();
+		this.#onAttemptCallbacks.clear();
 	}
 
 	/**

@@ -138,7 +138,7 @@ testsRunner([
 			await sleep(200);
 
 			const found = await jobs.find(job.uid);
-			assertEquals(found.job.status, "completed");
+			assertEquals(found.job!.status, "completed");
 
 			await jobs.stop();
 		},
@@ -160,7 +160,7 @@ testsRunner([
 			await sleep(200);
 
 			const found = await jobs.find(job.uid);
-			assertEquals(found.job.status, "completed");
+			assertEquals(found.job!.status, "completed");
 
 			await jobs.stop();
 		},

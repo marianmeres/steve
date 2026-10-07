@@ -7,6 +7,7 @@ import {
 import { _handleJobSuccess } from "./_handle-success.ts";
 import { _handleJobFailure } from "./_handle-failure.ts";
 import { _logAttemptStart } from "./_log-attempt.ts";
+import { _publishAttempt, _publishDone } from "./_events.ts";
 import { withTimeout } from "../utils/with-timeout.ts";
 
 export async function _executeJob(
@@ -14,63 +15,65 @@ export async function _executeJob(
 	job: Job,
 	handler: JobHandler
 ) {
-	const { tableNames } = context;
+	const { tableNames, logger } = context;
 	const attemptId = await context.withRetry(() =>
 		_logAttemptStart(context.db, tableNames.tableAttempts, job)
 	);
 
-	// we also need to publish "running" state as attempt (so we can track every state change effectively)
-	context.pubsubAttempt.publish(job.type, job);
+	// publish the "running" state as an attempt (so every state change is observable)
+	_publishAttempt(context, job);
 
-	context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(job));
-
+	// ONLY the handler is covered by this try/catch. Finalization and consumer
+	// callbacks live outside it, so a failure there can never be misattributed to the
+	// job (which used to flip an already-COMPLETED job back to PENDING and re-run it).
+	let ok = false;
+	let result: unknown;
+	let error: unknown;
 	try {
-		let __handler: () => Promise<unknown>;
-
-		if (job.max_attempt_duration_ms > 0) {
-			__handler = withTimeout(
-				(signal) => handler(job, signal),
-				job.max_attempt_duration_ms,
-				"Execution timed out"
-			);
-		} else {
-			__handler = async () => handler(job);
-		}
-
-		const result = await __handler();
-
-		// Finalization is retry-wrapped — transient DB blips during the write-path
-		// should not leave the job inconsistent.
-		const completedJob = await context.withRetry(() =>
-			_handleJobSuccess(context, job.id, attemptId, result)
-		);
-
-		context.pubsubAttempt.publish(job.type, completedJob);
-		context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(completedJob));
-		_execOnDone(context, completedJob);
-	} catch (error) {
-		const failedJob = await context.withRetry(() =>
-			_handleJobFailure(context, job, attemptId, error)
-		);
-		// publish every failed attempt (which may be a retry)
-		context.pubsubAttempt.publish(job.type, failedJob);
-		context.onAttemptCallbacks.get(job.uid)?.forEach((cb) => cb(failedJob));
-
-		// also, true failure
-		if (failedJob?.status === JOB_STATUS.FAILED) {
-			_execOnDone(context, failedJob);
-		}
+		const run =
+			job.max_attempt_duration_ms > 0
+				? withTimeout(
+						(signal) => handler(job, signal),
+						job.max_attempt_duration_ms,
+						"Execution timed out"
+				  )
+				: () => Promise.resolve().then(() => handler(job));
+		result = await run();
+		ok = true;
+	} catch (e) {
+		error = e;
 	}
-}
 
-//
-function _execOnDone(context: JobContext, job: Job) {
-	context.pubsubDone.publish(job.type, job);
+	// Finalization is retry-wrapped — transient DB blips during the write-path
+	// should not leave the job inconsistent.
+	const finalized = ok
+		? await context.withRetry(() =>
+				_handleJobSuccess(context, job, attemptId, result)
+		  )
+		: await context.withRetry(() =>
+				_handleJobFailure(context, job, attemptId, error)
+		  );
 
-	// call the callback (if exists)
-	context.onDoneCallbacks.get(job.uid)?.forEach((cb) => cb(job));
+	if (!finalized) {
+		// The row is no longer `running` on OUR attempt — somebody else finalized it in
+		// the meantime (typically the reaper marked it `expired`). The attempt log row was
+		// still written; the terminal state and its already-published onDone are left alone.
+		logger?.warn?.(
+			`Job ${job.id} (attempt ${job.attempts}) finished with ${
+				ok ? "success" : "error"
+			} after it was already finalized elsewhere — leaving its terminal state untouched.`
+		);
+		return;
+	}
 
-	// cleanup
-	context.onDoneCallbacks.delete(job.uid);
-	context.onAttemptCallbacks.delete(job.uid);
+	// publish every finalized attempt (completed, failed, or pending = planned retry)
+	_publishAttempt(context, finalized);
+
+	// and the terminal states
+	if (
+		finalized.status === JOB_STATUS.COMPLETED ||
+		finalized.status === JOB_STATUS.FAILED
+	) {
+		_publishDone(context, finalized);
+	}
 }
