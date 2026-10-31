@@ -1,6 +1,6 @@
 {
   "name": "@marianmeres/steve",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "PostgreSQL based jobs processing manager: concurrent workers, scheduling, retries with capped exponential backoff, timeouts, DB resilience and health monitoring.",
   "license": "MIT",
   "author": "Marian Meres",
