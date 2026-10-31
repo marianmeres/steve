@@ -272,8 +272,14 @@ PENDING → RUNNING → COMPLETED
 4. **Versioning / releasing** (human action): `package.json` is the manifest of record;
    `jsr.json` has no `version`. `pnpm run rp` / `rpm` = `@marianmeres/release` via npx
    (bump, commit, tag, push), then `pnpm publish` (`prepublishOnly`: `ci` + `build`), then
-   `publish:jsr` (`test:deno` + `deno publish --set-version`). JSR publishing rewrites the
-   bare dependency specifiers to `npm:` ones (from `package.json`).
+   `publish:jsr` (`test:deno` + `deno publish --set-version`).
+5. **JSR import map**: `deno publish` rewrites each bare specifier in the uploaded `src/`,
+   through `jsr.json`'s `imports` first and `package.json` otherwise (which yields `npm:`).
+   `jsr.json` maps the four `@marianmeres/*` deps to `jsr:`, so Deno consumers that already
+   import them from JSR get one copy, not a second npm one; `pg` stays `npm:` via
+   `package.json`. Keep the ranges in both manifests equal, and map any new
+   `@marianmeres/*` dependency in `jsr.json` too. Only `deno publish` reads `jsr.json`:
+   `test:deno` still resolves through `node_modules`.
 
 ## Testing
 
