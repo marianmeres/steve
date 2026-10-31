@@ -1,7 +1,7 @@
 import type pg from "pg";
-import { Jobs } from "../src/mod.ts";
+import { Jobs } from "../src/index.ts";
 import { testsRunner } from "./_tests-runner.ts";
-import { assert, assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { withDbRetry } from "../src/steve/utils/with-db-retry.ts";
 import { checkDbHealth } from "../src/steve/utils/db-health.ts";
@@ -33,8 +33,8 @@ testsRunner([
 				return "success";
 			});
 
-			assertEquals(result, "success");
-			assertEquals(attempts, 1);
+			assert.deepEqual(result, "success");
+			assert.deepEqual(attempts, 1);
 		},
 	},
 	{
@@ -59,8 +59,8 @@ testsRunner([
 				}
 			);
 
-			assertEquals(result, "success");
-			assertEquals(attempts, 3);
+			assert.deepEqual(result, "success");
+			assert.deepEqual(attempts, 3);
 		},
 	},
 	{
@@ -81,8 +81,8 @@ testsRunner([
 				);
 				assert(false, "Should have thrown");
 			} catch (e: any) {
-				assertEquals(e.message, "Some non-retryable error");
-				assertEquals(attempts, 1); // no retries
+				assert.deepEqual(e.message, "Some non-retryable error");
+				assert.deepEqual(attempts, 1); // no retries
 			}
 		},
 	},
@@ -106,8 +106,8 @@ testsRunner([
 				);
 				assert(false, "Should have thrown");
 			} catch (e: any) {
-				assertEquals(e.message, "Connection timeout");
-				assertEquals(attempts, 3); // initial + 2 retries
+				assert.deepEqual(e.message, "Connection timeout");
+				assert.deepEqual(attempts, 3); // initial + 2 retries
 			}
 		},
 	},
@@ -116,10 +116,10 @@ testsRunner([
 		async fn({ db }) {
 			const status = await checkDbHealth(db);
 
-			assertEquals(status.healthy, true);
+			assert.deepEqual(status.healthy, true);
 			assert(status.latencyMs !== null);
 			assert(status.latencyMs! >= 0);
-			assertEquals(status.error, null);
+			assert.deepEqual(status.error, null);
 			assert(status.timestamp instanceof Date);
 			assert(status.pgVersion); // should have version
 		},
@@ -138,7 +138,7 @@ testsRunner([
 			await sleep(200);
 
 			const found = await jobs.find(job.uid);
-			assertEquals(found.job!.status, "completed");
+			assert.deepEqual(found.job!.status, "completed");
 
 			await jobs.stop();
 		},
@@ -160,7 +160,7 @@ testsRunner([
 			await sleep(200);
 
 			const found = await jobs.find(job.uid);
-			assertEquals(found.job!.status, "completed");
+			assert.deepEqual(found.job!.status, "completed");
 
 			await jobs.stop();
 		},
@@ -182,7 +182,7 @@ testsRunner([
 			// Check we can get health status
 			const health = jobs.getDbHealth();
 			assert(health);
-			assertEquals(health.healthy, true);
+			assert.deepEqual(health.healthy, true);
 			assert(health.latencyMs !== null);
 
 			await jobs.stop();
@@ -208,7 +208,7 @@ testsRunner([
 			// Verify the health status works
 			const health = jobs.getDbHealth();
 			assert(health);
-			assertEquals(health.healthy, true);
+			assert.deepEqual(health.healthy, true);
 
 			await jobs.stop();
 		},
@@ -221,7 +221,7 @@ testsRunner([
 			await jobs.start(1);
 
 			const health = jobs.getDbHealth();
-			assertEquals(health, null);
+			assert.deepEqual(health, null);
 
 			await jobs.stop();
 		},
@@ -235,7 +235,7 @@ testsRunner([
 
 			// Should work even if health monitoring is not enabled
 			const health = await jobs.checkDbHealth();
-			assertEquals(health.healthy, true);
+			assert.deepEqual(health.healthy, true);
 			assert(health.latencyMs! >= 0);
 
 			await jobs.stop();
@@ -268,7 +268,7 @@ testsRunner([
 			// Health status should not have updated after stop
 			const healthAfter = jobs.getDbHealth();
 			assert(healthAfter);
-			assertEquals(healthAfter.timestamp, timestampBefore);
+			assert.deepEqual(healthAfter.timestamp, timestampBefore);
 		},
 	},
 ]);

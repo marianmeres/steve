@@ -5,7 +5,7 @@
  * then keeps the event loop alive on purpose: the only way for this process to end is
  * the re-raised SIGTERM's default action after `stop()` has finished.
  */
-import { Jobs } from "../src/mod.ts";
+import { Jobs } from "../src/index.ts";
 import { createPg } from "./_pg.ts";
 
 const db = createPg();

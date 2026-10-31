@@ -1,7 +1,7 @@
 /**
  * @module @marianmeres/steve
  *
- * PostgreSQL-based job processing manager for Deno and Node.js.
+ * PostgreSQL-based job processing manager.
  *
  * Steve provides a robust job queue system with support for concurrent workers,
  * job scheduling, configurable retry logic with exponential backoff, database

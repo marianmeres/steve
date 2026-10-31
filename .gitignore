@@ -1,11 +1,23 @@
 node_modules/
-.idea
-.DS_Store
+dist/
+*.tsbuildinfo
+
 .env
 .env.*
 !.env.example
-dist
-demo/demodb.sqlite3
-tmp/*
-.npm-dist
 
+# pnpm's lockfile is the one committed; another installer must not add a second
+package-lock.json
+npm-shrinkwrap.json
+bun.lock
+bun.lockb
+yarn.lock
+
+tmp/*
+!tmp/.gitkeep
+*.log
+
+.DS_Store
+.idea/
+.vscode/
+.claude/settings.local.json

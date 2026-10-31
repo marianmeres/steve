@@ -1,3 +1,4 @@
+import { test } from "node:test";
 import type pg from "pg";
 import { createPg } from "./_pg.ts";
 
@@ -13,8 +14,9 @@ export function testsRunner(
 	for (const def of tests) {
 		const { name, ignore, only } = def;
 		if (typeof def.fn !== "function") continue;
-		Deno.test(
-			{ name, ignore, only },
+		test(
+			name,
+			{ skip: ignore, only },
 			def.raw
 				? () => def.fn({ db: null as any })
 				: async () => {

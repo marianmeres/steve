@@ -1,0 +1,14 @@
+{
+  "name": "@marianmeres/steve",
+  "exports": "./src/index.ts",
+  "publish": {
+    "include": [
+      "src/**/*.ts",
+      "README.md",
+      "API.md",
+      "AGENTS.md",
+      "USAGE_DB_RESILIENCE.md",
+      "LICENSE"
+    ]
+  }
+}

@@ -18,7 +18,7 @@
 export function sleep(
 	timeout: number,
 	/**
-	 * Deno.test is quite strict and reports every non-cleared timeout... so we have to
+	 * Test runners (and clean exits) want every timeout cleared... so we have to
 	 * be able to pass in some object ref if needed (eg when sleep is not resolved via Promise.race)
 	 * to be able to do the clearing eventually.
 	 *

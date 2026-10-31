@@ -4,9 +4,9 @@ import {
 	JOB_STATUS,
 	type Job,
 	type JobHandler,
-} from "../src/mod.ts";
+} from "../src/index.ts";
 import { testsRunner } from "./_tests-runner.ts";
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import assert from "node:assert/strict";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import {
 	isPool,
@@ -22,7 +22,7 @@ function silentLogger() {
 
 interface CreateJobsOptions {
 	jobHandler?: JobHandler;
-	// deno-lint-ignore no-explicit-any
+	// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 	autoCleanup?: any;
 	gracefulSigterm?: boolean;
 }
@@ -43,7 +43,7 @@ async function _createJobs(db: pg.Client | pg.Pool, opts: CreateJobsOptions = {}
 
 /**
  * Small helper that awaits a condition with a small polling budget. Uses a single
- * timer at a time to keep Deno's resource-leak checker happy.
+ * timer at a time, so no stray timer outlives the test.
  */
 async function waitFor(
 	predicate: () => boolean | Promise<boolean>,
@@ -73,23 +73,23 @@ testsRunner([
 			const commands: { clientIdx: number; sql: string }[] = [];
 			const originalConnect = (db as pg.Pool).connect.bind(db);
 			let clientCounter = 0;
-			// deno-lint-ignore no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			(db as pg.Pool).connect = (async (...args: unknown[]) => {
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				const client = await (originalConnect as any)(...args);
 				const idx = clientCounter++;
 				const origQuery = client.query.bind(client);
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				(client as any).query = async (...qargs: unknown[]) => {
 					commands.push({
 						clientIdx: idx,
 						sql: String(qargs[0]).trim().slice(0, 40),
 					});
-					// deno-lint-ignore no-explicit-any
+					// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 					return await (origQuery as any)(...qargs);
 				};
 				return client;
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			}) as any;
 
 			try {
@@ -99,12 +99,12 @@ testsRunner([
 				});
 
 				const clientIndexes = new Set(commands.map((c) => c.clientIdx));
-				assertEquals(clientIndexes.size, 1, "all queries must share one client");
-				const sqlTypes = commands.map((c) => c.sql.split(" ")[0]);
-				assertEquals(sqlTypes[0], "BEGIN");
-				assertEquals(sqlTypes[sqlTypes.length - 1], "COMMIT");
+				assert.deepEqual(clientIndexes.size, 1, "all queries must share one client");
+				const sqlTypes = commands.map((c) => c.sql.split(" ")[0]!);
+				assert.deepEqual(sqlTypes[0], "BEGIN");
+				assert.deepEqual(sqlTypes[sqlTypes.length - 1], "COMMIT");
 			} finally {
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				(db as pg.Pool).connect = originalConnect as any;
 			}
 		},
@@ -114,35 +114,34 @@ testsRunner([
 		async fn({ db }) {
 			const events: string[] = [];
 			const originalConnect = (db as pg.Pool).connect.bind(db);
-			// deno-lint-ignore no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			(db as pg.Pool).connect = (async (...args: unknown[]) => {
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				const client = await (originalConnect as any)(...args);
 				const origQuery = client.query.bind(client);
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				(client as any).query = async (...args: unknown[]) => {
-					events.push(String(args[0]).trim().split(" ")[0]);
-					// deno-lint-ignore no-explicit-any
+					events.push(String(args[0]).trim().split(" ")[0]!);
+					// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 					return await (origQuery as any)(...args);
 				};
 				return client;
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			}) as any;
 
 			try {
-				await assertRejects(
+				await assert.rejects(
 					() =>
 						withTransaction(db, async () => {
 							throw new Error("boom");
 						}),
-					Error,
-					"boom"
+					{ message: /boom/ }
 				);
 				assert(events.includes("BEGIN"));
 				assert(events.includes("ROLLBACK"));
 				assert(!events.includes("COMMIT"));
 			} finally {
-				// deno-lint-ignore no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				(db as pg.Pool).connect = originalConnect as any;
 			}
 		},
@@ -157,7 +156,7 @@ testsRunner([
 			await jobs.create("foo", {});
 
 			const hostile = "1'; DROP TABLE does_not_exist; --";
-			// deno-lint-ignore no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			const rows = await jobs.fetchAll(null, { sinceMinutesAgo: hostile as any });
 			assert(Array.isArray(rows));
 
@@ -213,8 +212,8 @@ testsRunner([
 				await jobsB.create("b", {});
 				await waitFor(() => aCount === 1 && bCount === 1);
 
-				assertEquals(aCount, 1);
-				assertEquals(bCount, 1);
+				assert.deepEqual(aCount, 1);
+				assert.deepEqual(bCount, 1);
 
 				// Unsubscribe from A; B must still work (regression-guard for the
 				// static-wrap-map bug where this would tear down B's wrapper too).
@@ -222,7 +221,7 @@ testsRunner([
 
 				await jobsB.create("b", {});
 				await waitFor(() => bCount === 2);
-				assertEquals(bCount, 2);
+				assert.deepEqual(bCount, 2);
 			} finally {
 				await jobsA.stop();
 				await jobsB.stop();
@@ -245,13 +244,13 @@ testsRunner([
 				await jobs.start(1);
 				await jobs.create("a", {});
 				await waitFor(() => log.length === 1);
-				assertEquals(log, ["a"]);
+				assert.deepEqual(log, ["a"]);
 
 				unsubAll();
 				await jobs.create("b", {});
 				// give it a window to (not) fire
 				await waitFor(() => log.length === 2, { timeoutMs: 400 });
-				assertEquals(log, ["a"]);
+				assert.deepEqual(log, ["a"]);
 			} finally {
 				await jobs.stop();
 				jobs.unsubscribeAll();
@@ -273,7 +272,7 @@ testsRunner([
 				await jobs.start(1);
 				await jobs.create("a", {});
 				await waitFor(() => fired === 1);
-				assertEquals(fired, 1);
+				assert.deepEqual(fired, 1);
 			} finally {
 				await jobs.stop();
 				jobs.unsubscribeAll();
@@ -306,10 +305,10 @@ testsRunner([
 				);
 
 				const reaped = await jobs.cleanup(5);
-				assertEquals(reaped, 1);
-				assertEquals(doneFires, 1);
+				assert.deepEqual(reaped, 1);
+				assert.deepEqual(doneFires, 1);
 				assert(expiredRef.value);
-				assertEquals(expiredRef.value.status, JOB_STATUS.EXPIRED);
+				assert.deepEqual(expiredRef.value.status, JOB_STATUS.EXPIRED);
 				assert(expiredRef.value.completed_at);
 			} finally {
 				jobs.unsubscribeAll();
@@ -329,10 +328,10 @@ testsRunner([
 				[created.id]
 			);
 			const reaped = await jobs.cleanup(5);
-			assertEquals(reaped, 0);
+			assert.deepEqual(reaped, 0);
 
 			const found = await jobs.find(created.uid);
-			assertEquals(found.job!.status, JOB_STATUS.RUNNING);
+			assert.deepEqual(found.job!.status, JOB_STATUS.RUNNING);
 		},
 	},
 
@@ -358,7 +357,7 @@ testsRunner([
 				tablePrefix: "_bad_init_",
 			});
 
-			await assertRejects(() => jobs.start(1));
+			await assert.rejects(() => jobs.start(1));
 		},
 		raw: true,
 	},
@@ -372,7 +371,7 @@ testsRunner([
 			try {
 				await jobs.start(2);
 				await jobs.start(2);
-				assertEquals(jobs.__debugDump().processorsCount, 2);
+				assert.deepEqual(jobs.__debugDump().processorsCount, 2);
 			} finally {
 				await jobs.stop();
 			}
@@ -386,10 +385,10 @@ testsRunner([
 			await jobs.create("x", {});
 			await waitFor(() => jobs.__debugDump().isRunning === true);
 			await jobs.stop();
-			assertEquals(jobs.__debugDump().isRunning, false);
+			assert.deepEqual(jobs.__debugDump().isRunning, false);
 
 			await jobs.start(1);
-			assertEquals(jobs.__debugDump().isRunning, true);
+			assert.deepEqual(jobs.__debugDump().isRunning, true);
 			await jobs.stop();
 		},
 	},
@@ -399,7 +398,7 @@ testsRunner([
 	{
 		name: "SIGTERM listener: added on start, removed on stop",
 		async fn({ db }) {
-			// deno-lint-ignore no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			const proc = (await import("node:process")).default as any;
 			const baseline = proc.listenerCount("SIGTERM");
 
@@ -415,11 +414,11 @@ testsRunner([
 
 			try {
 				await jobs.start(1);
-				assertEquals(proc.listenerCount("SIGTERM"), baseline + 1);
+				assert.deepEqual(proc.listenerCount("SIGTERM"), baseline + 1);
 			} finally {
 				await jobs.stop();
 			}
-			assertEquals(proc.listenerCount("SIGTERM"), baseline);
+			assert.deepEqual(proc.listenerCount("SIGTERM"), baseline);
 		},
 	},
 
@@ -452,8 +451,8 @@ testsRunner([
 				}, { timeoutMs: 2000 });
 
 				const job = (await jobs.find(uid)).job!;
-				assertEquals(job.status, JOB_STATUS.COMPLETED);
-				assertEquals(job.attempts, 2);
+				assert.deepEqual(job.status, JOB_STATUS.COMPLETED);
+				assert.deepEqual(job.attempts, 2);
 				const startDelayMs =
 					new Date(job.started_at).valueOf() -
 					new Date(job.created_at).valueOf();
@@ -515,11 +514,10 @@ testsRunner([
 		name: "create(): invalid run_at throws TypeError with clear message",
 		async fn({ db }) {
 			const jobs = await _createJobs(db);
-			await assertRejects(
-				// deno-lint-ignore no-explicit-any
+			await assert.rejects(
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				() => jobs.create("foo", {}, { run_at: "not-a-date" as any }),
-				TypeError,
-				"Invalid 'run_at'"
+				{ name: "TypeError", message: /Invalid 'run_at'/ }
 			);
 		},
 	},
@@ -557,7 +555,7 @@ testsRunner([
 				[created.id]
 			);
 
-			// deno-lint-ignore no-explicit-any
+			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			const context = {
 				db,
 				tableNames: {
@@ -573,7 +571,7 @@ testsRunner([
 				attemptId,
 				new Error("boom")
 			);
-			assertEquals(failed!.status, JOB_STATUS.PENDING);
+			assert.deepEqual(failed!.status, JOB_STATUS.PENDING);
 			const deltaMs =
 				new Date(failed!.run_at).valueOf() - Date.now();
 			assert(
@@ -591,7 +589,7 @@ testsRunner([
 			const jobs = await _createJobs(db, { jobHandler: () => ({}) });
 			assert(jobs.hasHandler("any-type"));
 			jobs.resetHandlers();
-			assertEquals(jobs.hasHandler("any-type"), false);
+			assert.deepEqual(jobs.hasHandler("any-type"), false);
 		},
 	},
 

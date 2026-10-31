@@ -1,0 +1,82 @@
+{
+  "name": "@marianmeres/steve",
+  "version": "3.1.0",
+  "description": "PostgreSQL based jobs processing manager: concurrent workers, scheduling, retries with capped exponential backoff, timeouts, DB resilience and health monitoring.",
+  "license": "MIT",
+  "author": "Marian Meres",
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=24.12"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "API.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "USAGE_DB_RESILIENCE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marianmeres/steve.git"
+  },
+  "bugs": {
+    "url": "https://github.com/marianmeres/steve/issues"
+  },
+  "homepage": "https://github.com/marianmeres/steve#readme",
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "job",
+    "jobs",
+    "queue",
+    "worker",
+    "retry",
+    "backoff",
+    "scheduler"
+  ],
+  "scripts": {
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "node --test --test-concurrency=1 --env-file-if-exists=.env \"tests/**/*.test.ts\"",
+    "test:watch": "node --test --test-concurrency=1 --watch --env-file-if-exists=.env \"tests/**/*.test.ts\"",
+    "test:deno": "deno test -A --no-check --env-file=.env tests/",
+    "example": "node --env-file-if-exists=.env example/server.ts",
+    "ci": "pnpm run typecheck && pnpm run lint && pnpm test",
+    "prepublishOnly": "pnpm run ci && pnpm run build",
+    "release": "npx --yes @marianmeres/release@^2.2.0",
+    "publish:jsr": "pnpm run test:deno && deno publish --set-version \"$npm_package_version\"",
+    "publish:all": "pnpm publish && pnpm run publish:jsr",
+    "rp": "pnpm run release -y && pnpm run publish:all",
+    "rpm": "pnpm run release minor -y && pnpm run publish:all"
+  },
+  "dependencies": {
+    "@marianmeres/clog": "^3.23.0",
+    "@marianmeres/data-to-sql-params": "^1.6.0",
+    "@marianmeres/parse-boolean": "^2.1.0",
+    "@marianmeres/pubsub": "^3.0.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.3",
+    "@marianmeres/demino": "^2.0.0",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

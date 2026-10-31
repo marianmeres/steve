@@ -17,12 +17,11 @@ Uses [node-postgres](https://node-postgres.com/) internally.
 ## Installation
 
 ```shell
-deno add jsr:@marianmeres/steve
+npm i @marianmeres/steve                # or pnpm add
+deno add jsr:@marianmeres/steve         # Deno
 ```
 
-```shell
-npm i @marianmeres/steve
-```
+The npm package targets Node >= 24.12.
 
 ## Basic Usage
 
@@ -329,13 +328,31 @@ cp .env.example .env
 ```
 
 Now edit the `.env` and set `EXAMPLE_PG_*` postgres credentials. Then, finally, 
-run the server:
+install the deps and run the server:
 
 ```shell
-deno task example
+pnpm install
+pnpm run example
 ```
 
 Once deps are installed and server is running, just visit http://localhost:8000.
+
+## Development
+
+Node LTS (`.node-version`), pnpm, Biome, `node:test`. The source is erasable-only
+TypeScript that Node runs directly; `dist/` is built only for publishing. The tests need a
+PostgreSQL database: copy `.env.example` to `.env` and set the `TEST_PG_*` credentials.
+
+| Command                             | Does                                                        |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `pnpm install`                      | installs the deps and the dev tooling                       |
+| `pnpm test` / `pnpm run test:watch` | `node --test` over `tests/**/*.test.ts`, one file at a time |
+| `pnpm run typecheck`                | `tsc --noEmit` over `src`, `tests` and `example`            |
+| `pnpm run lint` / `pnpm run format` | `biome check .` read-only / with `--write`                  |
+| `pnpm run ci`                       | typecheck + lint + test, what CI runs                       |
+| `pnpm run build`                    | `tsc -p tsconfig.build.json` → `dist/`                      |
+| `pnpm run example`                  | the jobs monitor example above                              |
+| `pnpm run rp` / `pnpm run rpm`      | patch / minor release, then publish to npm and JSR          |
 
 ## Upgrading from 1.x to 2.0
 

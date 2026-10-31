@@ -4,11 +4,12 @@
  * init races and locking, purge, find() not-found, unsubscribeAll, SIGTERM lifecycle.
  */
 import type pg from "pg";
-import { JOB_STATUS, Jobs, type Job, type JobHandler } from "../src/mod.ts";
+import { JOB_STATUS, Jobs, type Job, type JobHandler } from "../src/index.ts";
 import { testsRunner } from "./_tests-runner.ts";
 import { createPgClient } from "./_pg.ts";
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { join } from "@std/path";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { sleep } from "../src/steve/utils/sleep.ts";
 
 const tablePrefix = "_fixes_v3_";
@@ -24,9 +25,9 @@ function captureLogger() {
 
 interface CreateJobsOptions {
 	jobHandler?: JobHandler;
-	// deno-lint-ignore no-explicit-any
+	// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 	autoCleanup?: any;
-	// deno-lint-ignore no-explicit-any
+	// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 	logger?: any;
 	prefix?: string;
 }
@@ -45,7 +46,7 @@ async function _createJobs(db: pg.Client | pg.Pool, opts: CreateJobsOptions = {}
 	return jobs;
 }
 
-/** Await a condition with a polling budget; a single timer at a time (Deno leak checker). */
+/** Await a condition with a polling budget; a single timer at a time, cleared on exit. */
 async function waitFor(
 	predicate: () => boolean | Promise<boolean>,
 	{ timeoutMs = 2000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {}
@@ -83,8 +84,8 @@ testsRunner([
 				 WHERE id = $1`,
 				[created.id]
 			);
-			assertEquals(await jobs.cleanup(5), 0, "a fresh attempt must NOT be reaped");
-			assertEquals(await statusOf(jobs, created.uid), JOB_STATUS.RUNNING);
+			assert.deepEqual(await jobs.cleanup(5), 0, "a fresh attempt must NOT be reaped");
+			assert.deepEqual(await statusOf(jobs, created.uid), JOB_STATUS.RUNNING);
 
 			// ...and once the CURRENT attempt is genuinely stale, it is reaped.
 			await db.query(
@@ -92,8 +93,8 @@ testsRunner([
 				 WHERE id = $1`,
 				[created.id]
 			);
-			assertEquals(await jobs.cleanup(5), 1);
-			assertEquals(await statusOf(jobs, created.uid), JOB_STATUS.EXPIRED);
+			assert.deepEqual(await jobs.cleanup(5), 1);
+			assert.deepEqual(await statusOf(jobs, created.uid), JOB_STATUS.EXPIRED);
 		},
 	},
 
@@ -122,9 +123,9 @@ testsRunner([
 				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.RUNNING);
 
 				// reap it while the handler is still running (threshold 0 => claimed before now)
-				assertEquals(await jobs.cleanup(0), 1);
-				assertEquals(done.length, 1);
-				assertEquals(done[0].status, JOB_STATUS.EXPIRED);
+				assert.deepEqual(await jobs.cleanup(0), 1);
+				assert.deepEqual(done.length, 1);
+				assert.deepEqual(done[0]!.status, JOB_STATUS.EXPIRED);
 
 				// let the handler finish and finalization run
 				await waitFor(async () => {
@@ -133,10 +134,10 @@ testsRunner([
 				});
 
 				const { job, attempts } = await jobs.find(created.uid, true);
-				assertEquals(job!.status, JOB_STATUS.EXPIRED, "expired must stay expired");
-				assertEquals(job!.result, {}, "late result must not be stored on the row");
-				assertEquals(attempts![0].status, "success", "attempt log stays truthful");
-				assertEquals(done.length, 1, "onDone must fire exactly once");
+				assert.deepEqual(job!.status, JOB_STATUS.EXPIRED, "expired must stay expired");
+				assert.deepEqual(job!.result, {}, "late result must not be stored on the row");
+				assert.deepEqual(attempts![0]!.status, "success", "attempt log stays truthful");
+				assert.deepEqual(done.length, 1, "onDone must fire exactly once");
 				assert(
 					lines.some((l) => /already finalized elsewhere/.test(l)),
 					"the late finalization must be logged"
@@ -180,10 +181,10 @@ testsRunner([
 				await sleep(300, ref);
 
 				const { job, attempts } = await jobs.find(created.uid, true);
-				assertEquals(job!.status, JOB_STATUS.COMPLETED);
-				assertEquals(executions, 1, "handler must run exactly once");
-				assertEquals(attempts!.length, 1);
-				assertEquals(attempts![0].status, "success");
+				assert.deepEqual(job!.status, JOB_STATUS.COMPLETED);
+				assert.deepEqual(executions, 1, "handler must run exactly once");
+				assert.deepEqual(attempts!.length, 1);
+				assert.deepEqual(attempts![0]!.status, "success");
 				assert(lines.some((l) => /onDone callback/.test(l) && /consumer bug/.test(l)));
 			} finally {
 				await jobs.stop();
@@ -196,11 +197,10 @@ testsRunner([
 		name: "per-uid onDone: an async rejecting callback is logged, not an unhandled rejection",
 		async fn({ db }) {
 			let unhandled = 0;
-			const onUnhandled = (e: Event) => {
+			const onUnhandled = () => {
 				unhandled++;
-				e.preventDefault();
 			};
-			globalThis.addEventListener("unhandledrejection", onUnhandled);
+			process.on("unhandledRejection", onUnhandled);
 			const ref = { id: -1 };
 			const { lines, logger } = captureLogger();
 			const jobs = await _createJobs(db, { logger, jobHandler: () => ({ ok: true }) });
@@ -213,13 +213,13 @@ testsRunner([
 				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED);
 				await sleep(100, ref);
 
-				assertEquals(unhandled, 0);
+				assert.deepEqual(unhandled, 0);
 				assert(lines.some((l) => /onDone callback/.test(l) && /async consumer bug/.test(l)));
 			} finally {
 				await jobs.stop();
 				jobs.unsubscribeAll();
 				clearTimeout(ref.id);
-				globalThis.removeEventListener("unhandledrejection", onUnhandled);
+				process.off("unhandledRejection", onUnhandled);
 			}
 		},
 	},
@@ -241,9 +241,9 @@ testsRunner([
 				await jobs.start(1);
 				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED);
 				const { job, attempts } = await jobs.find(created.uid, true);
-				assertEquals(job!.status, JOB_STATUS.COMPLETED);
-				assertEquals(executions, 1);
-				assertEquals(attempts![0].status, "success");
+				assert.deepEqual(job!.status, JOB_STATUS.COMPLETED);
+				assert.deepEqual(executions, 1);
+				assert.deepEqual(attempts![0]!.status, "success");
 			} finally {
 				await jobs.stop();
 				jobs.unsubscribeAll();
@@ -266,15 +266,15 @@ testsRunner([
 						return s === JOB_STATUS.COMPLETED || s === JOB_STATUS.FAILED;
 					});
 					const { job } = await jobs.find(j.uid);
-					assertEquals(job!.status, JOB_STATUS.COMPLETED, `type "${type}"`);
-					assertEquals(job!.result, { global: true }, `type "${type}"`);
+					assert.deepEqual(job!.status, JOB_STATUS.COMPLETED, `type "${type}"`);
+					assert.deepEqual(job!.result, { global: true }, `type "${type}"`);
 				}
 
 				jobs.resetHandlers();
-				assertEquals(jobs.hasHandler("constructor"), false);
+				assert.deepEqual(jobs.hasHandler("constructor"), false);
 				jobs.setHandler("__proto__", () => ({}));
-				assertEquals(jobs.hasHandler("__proto__"), true);
-				assertEquals(jobs.hasHandler("x"), false);
+				assert.deepEqual(jobs.hasHandler("__proto__"), true);
+				assert.deepEqual(jobs.hasHandler("x"), false);
 			} finally {
 				await jobs.stop();
 			}
@@ -298,12 +298,12 @@ testsRunner([
 			});
 			try {
 				await jobs.resetHard();
-				await assertRejects(() => jobs.start(2), Error, "single processor");
+				await assert.rejects(() => jobs.start(2), { message: /single processor/ });
 
 				await jobs.start(1);
 				const j = await jobs.create("x", {}, { max_attempts: 1 });
 				await waitFor(async () => (await statusOf(jobs, j.uid)) === JOB_STATUS.COMPLETED);
-				assertEquals(await statusOf(jobs, j.uid), JOB_STATUS.COMPLETED);
+				assert.deepEqual(await statusOf(jobs, j.uid), JOB_STATUS.COMPLETED);
 				await jobs.stop();
 				await jobs.uninstall();
 			} finally {
@@ -336,7 +336,7 @@ testsRunner([
 				await jobs.create("y", {});
 				assert((await jobs.fetchAll()).length >= 1);
 				await jobs.resetHard();
-				assertEquals((await jobs.fetchAll()).length, 0);
+				assert.deepEqual((await jobs.fetchAll()).length, 0);
 			} finally {
 				await jobs.uninstall();
 			}
@@ -365,7 +365,7 @@ testsRunner([
 				clearTimeout(ref.id);
 				await reader.query("ROLLBACK");
 				await init; // settle either way
-				assertEquals(
+				assert.deepEqual(
 					outcome,
 					"ok",
 					"schema init must not take an ACCESS EXCLUSIVE lock when nothing needs to change"
@@ -402,27 +402,27 @@ testsRunner([
 				[a.id, b.id]
 			);
 
-			assertEquals(await jobs.purge(7 * 24 * 60), 2);
-			assertEquals((await jobs.find(a.uid)).job, undefined);
-			assertEquals((await jobs.find(b.uid)).job, undefined);
-			assertEquals(await statusOf(jobs, c.uid), JOB_STATUS.COMPLETED);
+			assert.deepEqual(await jobs.purge(7 * 24 * 60), 2);
+			assert.deepEqual((await jobs.find(a.uid)).job, undefined);
+			assert.deepEqual((await jobs.find(b.uid)).job, undefined);
+			assert.deepEqual(await statusOf(jobs, c.uid), JOB_STATUS.COMPLETED);
 
 			const { rows } = await db.query(
 				`SELECT count(*)::int AS n FROM ${tablePrefix}__job_attempt_log`
 			);
-			assertEquals(rows[0].n, 1, "attempt logs must cascade");
+			assert.deepEqual(rows[0].n, 1, "attempt logs must cascade");
 
 			// nothing left within retention
-			assertEquals(await jobs.purge(7 * 24 * 60), 0);
+			assert.deepEqual(await jobs.purge(7 * 24 * 60), 0);
 
 			// non-terminal statuses can never be purged
-			await assertRejects(
-				// deno-lint-ignore no-explicit-any
+			await assert.rejects(
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				() => jobs.purge(0, { statuses: ["pending"] as any }),
 				TypeError
 			);
-			await assertRejects(
-				// deno-lint-ignore no-explicit-any
+			await assert.rejects(
+				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				() => jobs.purge(0, { statuses: ["completed", "running"] as any }),
 				TypeError
 			);
@@ -436,9 +436,9 @@ testsRunner([
 		async fn({ db }) {
 			const jobs = await _createJobs(db);
 			const r = await jobs.find("not-a-uuid", true);
-			assertEquals(r.job, undefined);
-			assertEquals(r.attempts, null);
-			assertEquals((await jobs.find("", false, { tenant_id: "acme" })).job, undefined);
+			assert.deepEqual(r.job, undefined);
+			assert.deepEqual(r.attempts, null);
+			assert.deepEqual((await jobs.find("", false, { tenant_id: "acme" })).job, undefined);
 		},
 	},
 
@@ -451,11 +451,11 @@ testsRunner([
 			const j = await jobs.create("x", {}, {}, () => {});
 			jobs.onDoneFor(j.uid, () => {});
 			jobs.onAttemptFor(j.uid, () => {});
-			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
-			assertEquals(Object.keys(jobs.__debugDump().onAttemptCallbacks).length, 1);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onAttemptCallbacks).length, 1);
 			jobs.unsubscribeAll();
-			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
-			assertEquals(Object.keys(jobs.__debugDump().onAttemptCallbacks).length, 0);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onAttemptCallbacks).length, 0);
 		},
 	},
 
@@ -464,49 +464,44 @@ testsRunner([
 	{
 		name: "SIGTERM: default handler stops processing, then lets the process terminate",
 		async fn({ db }) {
-			const root = join(import.meta.dirname!, "..");
-			const child = new Deno.Command(Deno.execPath(), {
-				args: ["run", "-A", join("tests", "_sigterm-child.ts")],
-				cwd: root,
-				stdout: "piped",
-				stderr: "piped",
-			}).spawn();
+			// Under `pnpm run test:deno` (the gate before a JSR publish) the child runs on
+			// Deno too, which needs `run -A`; Node runs the .ts directly.
+			const childPath = join("tests", "_sigterm-child.ts");
+			const args = "Deno" in globalThis ? ["run", "-A", childPath] : [childPath];
+			const child = spawn(process.execPath, args, {
+				cwd: join(import.meta.dirname, ".."),
+				stdio: ["ignore", "pipe", "pipe"],
+			});
 
-			const decoder = new TextDecoder();
-			const reader = child.stdout.getReader();
 			let out = "";
-			const readUntil = async (pred: () => boolean, timeoutMs: number) => {
-				const deadline = Date.now() + timeoutMs;
-				while (!pred() && Date.now() < deadline) {
-					const ref = { id: -1 };
-					const chunk = await Promise.race([
-						reader.read(),
-						sleep(deadline - Date.now(), ref).then(() => ({ done: true, value: undefined })),
-					]);
-					clearTimeout(ref.id);
-					if (chunk.done) break;
-					out += decoder.decode(chunk.value);
-				}
-			};
+			child.stdout.setEncoding("utf8");
+			child.stdout.on("data", (chunk: string) => {
+				out += chunk;
+			});
+			child.stderr.resume();
+			// "close" == the child is gone AND its stdout is drained
+			const exited = new Promise<{ code: number | null; signal: string | null }>(
+				(resolve) => child.once("close", (code, signal) => resolve({ code, signal }))
+			);
 
 			try {
-				await readUntil(() => out.includes("STARTED"), 15_000);
+				await waitFor(() => out.includes("STARTED"), { timeoutMs: 15_000 });
 				assert(out.includes("STARTED"), `child did not start:\n${out}`);
 
 				child.kill("SIGTERM");
 
-				// EOF on stdout == the child is gone
-				await readUntil(() => false, 10_000);
+				const ref = { id: -1 };
 				const status = await Promise.race([
-					child.status,
-					sleep(5_000).then(() => null),
+					exited,
+					sleep(15_000, ref).then(() => null),
 				]);
+				clearTimeout(ref.id);
 				if (!status) {
 					child.kill("SIGKILL");
-					await child.status;
+					await exited;
 					throw new Error(`child did not terminate after SIGTERM:\n${out}`);
 				}
-				assert(!status.success);
+				assert(status.code !== 0);
 				assert(
 					status.signal === "SIGTERM" || status.code === 143,
 					`expected SIGTERM termination, got ${JSON.stringify(status)}`
@@ -514,8 +509,10 @@ testsRunner([
 				assert(/Job processor .* stopped/.test(out), `must stop gracefully first:\n${out}`);
 				assert(/Re-raising SIGTERM/.test(out), `must re-raise after stop():\n${out}`);
 			} finally {
-				reader.releaseLock();
-				await new Response(child.stderr).text();
+				if (child.exitCode === null && child.signalCode === null) {
+					child.kill("SIGKILL");
+					await exited;
+				}
 				await db.query(`DROP TABLE IF EXISTS _sigterm_child___job_attempt_log;`);
 				await db.query(`DROP TABLE IF EXISTS _sigterm_child___job;`);
 			}

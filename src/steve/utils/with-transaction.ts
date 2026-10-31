@@ -12,7 +12,7 @@
 import type pg from "pg";
 
 /** Lowest-common-denominator queryable — everything we need in transactional helpers. */
-// deno-lint-ignore no-explicit-any -- pg's .query overloads are complex and vary by driver
+// biome-ignore lint/suspicious/noExplicitAny: pg's .query overloads are complex and vary by driver
 export type Queryable = { query: (...args: any[]) => Promise<any> };
 
 /**

@@ -1,8 +1,8 @@
 import type pg from "pg";
-import { type Job, JOB_STATUS, Jobs } from "../src/mod.ts";
+import { type Job, JOB_STATUS, Jobs } from "../src/index.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
-import { assert, assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { sleep } from "../src/steve/utils/sleep.ts";
 
 const silent = { debug() {}, error() {}, warn() {}, log() {} };
@@ -35,18 +35,18 @@ testsRunner([
 			const tagged = await jobs.create("t", { a: 1 }, { tenant_id: "acme" });
 
 			// returned shape carries the column
-			assertEquals(global.tenant_id, null);
-			assertEquals(tagged.tenant_id, "acme");
+			assert.deepEqual(global.tenant_id, null);
+			assert.deepEqual(tagged.tenant_id, "acme");
 
 			// round-trips via find
-			assertEquals((await jobs.find(global.uid)).job!.tenant_id, null);
-			assertEquals((await jobs.find(tagged.uid)).job!.tenant_id, "acme");
+			assert.deepEqual((await jobs.find(global.uid)).job!.tenant_id, null);
+			assert.deepEqual((await jobs.find(tagged.uid)).job!.tenant_id, "acme");
 
 			// empty string / null are treated as "global" (NULL)
 			const e1 = await jobs.create("e", {}, { tenant_id: "" });
 			const e2 = await jobs.create("e", {}, { tenant_id: null });
-			assertEquals(e1.tenant_id, null);
-			assertEquals(e2.tenant_id, null);
+			assert.deepEqual(e1.tenant_id, null);
+			assert.deepEqual(e2.tenant_id, null);
 		},
 	},
 	{
@@ -60,25 +60,25 @@ testsRunner([
 			await jobs.create("x", {}); // global / un-scoped
 
 			const acme = await jobs.fetchAll(null, { tenant_id: "acme" });
-			assertEquals(acme.length, 2);
+			assert.deepEqual(acme.length, 2);
 			assert(acme.every((j) => j.tenant_id === "acme"));
 
 			const both = await jobs.fetchAll(null, {
 				tenant_id: ["acme", "globex"],
 			});
-			assertEquals(both.length, 3);
+			assert.deepEqual(both.length, 3);
 			assert(both.every((j) => j.tenant_id !== null));
 
 			// unfiltered returns everything incl. the global job
 			const all = await jobs.fetchAll();
-			assertEquals(all.length, 4);
+			assert.deepEqual(all.length, 4);
 			assert(all.some((j) => j.tenant_id === null));
 
 			// tenant + status filter compose
 			const acmePending = await jobs.fetchAll(JOB_STATUS.PENDING, {
 				tenant_id: "acme",
 			});
-			assertEquals(acmePending.length, 2);
+			assert.deepEqual(acmePending.length, 2);
 		},
 	},
 	{
@@ -90,7 +90,7 @@ testsRunner([
 			// correct tenant => found
 			assert((await jobs.find(job.uid, false, { tenant_id: "acme" })).job);
 			// wrong tenant => not found (defense-in-depth; uid is globally unique)
-			assertEquals(
+			assert.deepEqual(
 				(await jobs.find(job.uid, false, { tenant_id: "globex" })).job,
 				undefined,
 			);
@@ -114,10 +114,10 @@ testsRunner([
 			await jobs.stop();
 
 			const done = (await jobs.find(job.uid)).job!;
-			assertEquals(done.status, JOB_STATUS.COMPLETED);
+			assert.deepEqual(done.status, JOB_STATUS.COMPLETED);
 			// the handler observed the tenant_id, and it survives completion
-			assertEquals(seen[0]?.tenant_id, "acme");
-			assertEquals(done.tenant_id, "acme");
+			assert.deepEqual(seen[0]?.tenant_id, "acme");
+			assert.deepEqual(done.tenant_id, "acme");
 		},
 	},
 	{
@@ -131,12 +131,12 @@ testsRunner([
 
 			const acme = await jobs.healthPreview(60, { tenant_id: "acme" });
 			const pending = acme.find((r) => r.status === JOB_STATUS.PENDING);
-			assertEquals(Number(pending?.count), 2);
+			assert.deepEqual(Number(pending?.count), 2);
 
 			// unscoped sees all four
 			const all = await jobs.healthPreview(60);
 			const allPending = all.find((r) => r.status === JOB_STATUS.PENDING);
-			assertEquals(Number(allPending?.count), 4);
+			assert.deepEqual(Number(allPending?.count), 4);
 		},
 	},
 	{
@@ -158,11 +158,11 @@ testsRunner([
 			);
 
 			const reaped = await jobs.cleanup(5, { tenant_id: "acme" });
-			assertEquals(reaped, 1);
+			assert.deepEqual(reaped, 1);
 
-			assertEquals((await jobs.find(a.uid)).job!.status, JOB_STATUS.EXPIRED);
+			assert.deepEqual((await jobs.find(a.uid)).job!.status, JOB_STATUS.EXPIRED);
 			// globex's stuck job is NOT reaped by the acme-scoped cleanup
-			assertEquals((await jobs.find(g.uid)).job!.status, JOB_STATUS.RUNNING);
+			assert.deepEqual((await jobs.find(g.uid)).job!.status, JOB_STATUS.RUNNING);
 		},
 	},
 	{
@@ -215,11 +215,11 @@ testsRunner([
 				`SELECT tenant_id FROM ${tableJobs} WHERE id = $1`,
 				[legacy.id],
 			);
-			assertEquals(rows[0].tenant_id, null);
+			assert.deepEqual(rows[0].tenant_id, null);
 
 			// and tenant-tagged creation works against the healed table
 			const tagged = await jobs.create("x", {}, { tenant_id: "acme" });
-			assertEquals(tagged.tenant_id, "acme");
+			assert.deepEqual(tagged.tenant_id, "acme");
 
 			await jobs.uninstall();
 		},

@@ -1,15 +1,17 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { demino } from "@marianmeres/demino";
-import { join } from "@std/path";
+import { serve } from "@marianmeres/demino/node";
 import pg from "pg";
-import { Jobs, type Job } from "@marianmeres/steve";
+import { Jobs, type Job } from "../src/index.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 
 const { PG_HOST, PG_DATABASE, PG_USER, PG_PASSWORD, PG_PORT } = {
-	PG_HOST: Deno.env.get("EXAMPLE_PG_HOST") || "localhost",
-	PG_DATABASE: Deno.env.get("EXAMPLE_PG_DATABASE"),
-	PG_USER: Deno.env.get("EXAMPLE_PG_USER"),
-	PG_PASSWORD: Deno.env.get("EXAMPLE_PG_PASSWORD"),
-	PG_PORT: Deno.env.get("EXAMPLE_PG_PORT") || "5432",
+	PG_HOST: process.env.EXAMPLE_PG_HOST || "localhost",
+	PG_DATABASE: process.env.EXAMPLE_PG_DATABASE,
+	PG_USER: process.env.EXAMPLE_PG_USER,
+	PG_PASSWORD: process.env.EXAMPLE_PG_PASSWORD,
+	PG_PORT: process.env.EXAMPLE_PG_PORT || "5432",
 };
 
 const db = new pg.Pool({
@@ -20,7 +22,7 @@ const db = new pg.Pool({
 	port: parseInt(PG_PORT),
 });
 
-const INDEX_HTML = join(import.meta.dirname!, "index.html");
+const INDEX_HTML = join(import.meta.dirname, "index.html");
 
 const TYPES = ["foo", "bar", "baz", "bat"];
 
@@ -55,7 +57,7 @@ async function main() {
 		},
 	]);
 
-	app.get("/", () => Deno.readTextFile(INDEX_HTML));
+	app.get("/", () => readFile(INDEX_HTML, "utf8"));
 
 	app.get("/jobs", (r, _i, c) => {
 		const q = Object.fromEntries(new URL(r.url).searchParams.entries());
@@ -63,14 +65,14 @@ async function main() {
 	});
 
 	app.get("/job/[uid]", (_r, _i, c) =>
-		(c.locals.jobs as Jobs).find(c.params.uid)
+		(c.locals.jobs as Jobs).find(c.params.uid!)
 	);
 
 	app.get("/health", (_r, _i, c) =>
 		(c.locals.jobs as Jobs).healthPreview(15)
 	);
 
-	Deno.serve(app);
+	await serve(app);
 }
 
 if (import.meta.main) {

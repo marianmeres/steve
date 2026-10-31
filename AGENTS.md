@@ -2,15 +2,19 @@
 
 ## Quick Reference
 
-- **Stack**: Deno/Node.js, PostgreSQL, pg driver
-- **Run**: `deno task example` | **Test**: `deno task test` | **Build**: `deno task npm:build`
+- **Stack**: TypeScript (erasable-only), Node LTS (`.node-version`), pnpm, `node:test`,
+  Biome; PostgreSQL via the `pg` driver
+- **Install**: `pnpm install` | **Test**: `pnpm test` | **Check all**: `pnpm run ci` |
+  **Build**: `pnpm run build` | **Example**: `pnpm run example`
+- **Distribution**: one source, two registries. npm gets `dist/` (ESM + `.d.ts`); JSR
+  (`jsr.json`) gets `src/`, for the Deno consumers that still import it via `jsr:`.
 
 ## Package Overview
 
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
-- **Runtime**: Deno and Node.js
-- **Version**: 3.0.0 (+ unreleased post-review fixes, see README "Upgrading from 3.0")
+- **Runtime**: Node.js (also published to JSR; Deno is a consumer runtime, not a dev one)
+- **Version**: 3.1.0
 - **License**: MIT
 
 ## Purpose
@@ -29,7 +33,7 @@ Steve is a PostgreSQL-based job processing manager that provides:
 
 ```
 src/
-├── mod.ts                  # Main entry point, re-exports public API
+├── index.ts                # Main entry point (npm + JSR "exports"), re-exports public API
 └── steve/
     ├── jobs.ts             # Main Jobs class and public types
     ├── job/                # Internal job operations
@@ -63,12 +67,13 @@ src/
 - [ ] Consumer callbacks are invoked ONLY via `_events.ts` (`_safeInvoke`) or `#onEvent` — never call a user callback bare
 - [ ] `job/_*.ts` modules are imported by `jobs.ts`: never read `JOB_STATUS` / `BACKOFF_STRATEGY` at module top level (circular-import TDZ) — only inside functions
 - [ ] The reaper (`_mark-expired.ts`) measures `updated_at`, never `started_at`
-- [ ] Run tests: `deno task test`
+- [ ] Run the full gate: `pnpm run ci` (typecheck + Biome + tests); `pnpm run test:deno`
+      too before a JSR publish
 - [ ] Ensure PostgreSQL test database is available (see `.env.example`)
 
 ## Public API Exports
 
-From `src/mod.ts`:
+From `src/index.ts`:
 
 ### Classes
 - `Jobs` - Main job manager class
@@ -231,13 +236,39 @@ PENDING → RUNNING → COMPLETED
 - `@marianmeres/data-to-sql-params` - SQL parameter builder
 - `@marianmeres/parse-boolean` - Used for `asc` flag coercion
 
+## Runtime & Tooling Conventions
+
+1. **Runtime policy**: Node at the keyboard and in production, npm as the registry. No
+   `Deno.*`, `Bun.*`, `jsr:` or `npm:` specifiers, no `@std/*`. Web standards first;
+   `node:*` where they don't reach. The library's only `node:*` import is `node:process`
+   (SIGTERM handling in `jobs.ts`).
+2. **Erasable TypeScript**: no `enum`, `namespace`, constructor parameter properties;
+   `import type` for types; explicit `.ts` import extensions (rewritten to `.js` on emit).
+   Node strips types and never checks them: `pnpm run typecheck` is the only type gate
+   (`src`, `tests` and `example`).
+3. **Formatting**: Biome (tabs, 4 wide, 90 cols, double quotes, trailing commas; manifests
+   2 spaces). `pnpm run format` before committing; `pnpm run lint` is the read-only check CI
+   runs. `example/index.html` is excluded (it inlines vendor CSS).
+4. **Versioning / releasing** (human action): `package.json` is the manifest of record;
+   `jsr.json` has no `version`. `pnpm run rp` / `rpm` = `@marianmeres/release` via npx
+   (bump, commit, tag, push), then `pnpm publish` (`prepublishOnly`: `ci` + `build`), then
+   `publish:jsr` (`test:deno` + `deno publish --set-version`). JSR publishing rewrites the
+   bare dependency specifiers to `npm:` ones (from `package.json`).
+
 ## Testing
 
 ```bash
-deno task test
+pnpm test           # Node, the gate
+pnpm run test:deno  # the same suite on Deno, before a JSR publish
 ```
 
-Requires PostgreSQL with credentials in `.env` file:
+`node --test` runs with `--test-concurrency=1`, so files run one at a time as `deno test`
+ran them: every file hits the same database and many tests are timing-based
+(sleep, then assert). Tests are
+`node:test` + `node:assert/strict`, registered through `tests/_tests-runner.ts` (each test
+gets a fresh `pg.Pool`, ended afterwards).
+
+Requires PostgreSQL with credentials in `.env` file (loaded via `--env-file-if-exists`):
 ```
 TEST_PG_HOST=localhost
 TEST_PG_DATABASE=test
@@ -316,7 +347,7 @@ const jobs = new Jobs({
 
 | Purpose | Path |
 |---------|------|
-| Main entry | `src/mod.ts` |
+| Main entry | `src/index.ts` |
 | Jobs class | `src/steve/jobs.ts` |
 | Retry utility | `src/steve/utils/with-db-retry.ts` |
 | Transaction utility | `src/steve/utils/with-transaction.ts` |
@@ -324,4 +355,5 @@ const jobs = new Jobs({
 | Timeout/AbortSignal | `src/steve/utils/with-timeout.ts` |
 | Tests | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
 | Example server | `example/server.ts` |
-| Config | `deno.json` |
+| Config | `package.json`, `jsr.json`, `tsconfig.json`, `biome.json` |
+| CI | `.github/workflows/ci.yml` (Node + a PostgreSQL service) |

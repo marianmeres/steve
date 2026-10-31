@@ -1228,9 +1228,11 @@ export class Jobs {
 			});
 		}
 
-		const composite = (() => unsubs.forEach((u) => u())) as Unsubscriber;
-		(composite as unknown as { [Symbol.dispose]: () => void })[Symbol.dispose] =
-			() => unsubs.forEach((u) => u());
+		const unsubAll = () => {
+			for (const u of unsubs) u();
+		};
+		const composite = unsubAll as Unsubscriber;
+		(composite as unknown as { [Symbol.dispose]: () => void })[Symbol.dispose] = unsubAll;
 		return composite;
 	}
 

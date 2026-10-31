@@ -7,10 +7,10 @@ import {
 	Jobs,
 	type Job,
 	type JobHandler,
-} from "../src/mod.ts";
+} from "../src/index.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
-import { assert, assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { sleep } from "../src/steve/utils/sleep.ts";
 
 let _logger: any = [];
@@ -58,12 +58,12 @@ testsRunner([
 			const jobFound = (await jobs.find(job.uid)).job;
 
 			// just some sanity checks if the row was properly created
-			assertEquals(job, jobFound);
-			assertEquals(job.type, "foo");
-			assertEquals(job.status, JOB_STATUS.PENDING);
-			assertEquals(job.payload, { bar: "baz" });
-			assertEquals(job.attempts, 0);
-			assertEquals(job.max_attempts, 5);
+			assert.deepEqual(job, jobFound);
+			assert.deepEqual(job.type, "foo");
+			assert.deepEqual(job.status, JOB_STATUS.PENDING);
+			assert.deepEqual(job.payload, { bar: "baz" });
+			assert.deepEqual(job.attempts, 0);
+			assert.deepEqual(job.max_attempts, 5);
 
 			// must exists
 			assert(job.created_at);
@@ -83,8 +83,8 @@ testsRunner([
 
 			// out job handler sleeps a bit, so we know, that it must be
 			// running first attempt, and not completed yet
-			assertEquals(job.status, JOB_STATUS.RUNNING);
-			assertEquals(job.attempts, 1);
+			assert.deepEqual(job.status, JOB_STATUS.RUNNING);
+			assert.deepEqual(job.attempts, 1);
 			assert(job.started_at);
 			assert(!job.completed_at);
 
@@ -98,23 +98,23 @@ testsRunner([
 			const attempts = r.attempts;
 
 			//
-			assertEquals(job.status, JOB_STATUS.COMPLETED);
-			assertEquals(job.attempts, 1);
-			assertEquals(job.result, { hey: "ho" });
+			assert.deepEqual(job.status, JOB_STATUS.COMPLETED);
+			assert.deepEqual(job.attempts, 1);
+			assert.deepEqual(job.result, { hey: "ho" });
 			assert(job.started_at);
 			assert(job.completed_at);
 			assert(new Date(job.completed_at) > new Date(job.started_at));
 
 			//
-			assertEquals(attempts?.length, 1);
-			assertEquals(attempts![0].status, ATTEMPT_STATUS.SUCCESS);
+			assert.deepEqual(attempts?.length, 1);
+			assert.deepEqual(attempts![0]!.status, ATTEMPT_STATUS.SUCCESS);
 			assert(
-				new Date(attempts![0].completed_at) > new Date(attempts![0].started_at)
+				new Date(attempts![0]!.completed_at) > new Date(attempts![0]!.started_at)
 			);
 
 			// as a sideeffect our job was logged during the handling (was in running status)...
-			assertEquals(log.length, 1);
-			assertEquals(log[0].status, JOB_STATUS.RUNNING);
+			assert.deepEqual(log.length, 1);
+			assert.deepEqual(log[0].status, JOB_STATUS.RUNNING);
 
 			//
 			await jobs.stop();
@@ -157,27 +157,27 @@ testsRunner([
 			// sleep a while... (we need 3 process cycles)
 			await sleep(500);
 
-			assertEquals(_errorCounter, 2);
-			assertEquals(_executionCounter, 3);
-			assertEquals(attemptCounter, 3 + 3); // 3 running + 3 completed
-			assertEquals(doneCounter, 1);
+			assert.deepEqual(_errorCounter, 2);
+			assert.deepEqual(_executionCounter, 3);
+			assert.deepEqual(attemptCounter, 3 + 3); // 3 running + 3 completed
+			assert.deepEqual(doneCounter, 1);
 
 			// we must see 3 logged executions system messages
 			let _loggerExecCounter = 0;
 			_logger.forEach((msg: string) => {
 				if (/executing job 1/i.test(msg)) _loggerExecCounter++;
 			});
-			assertEquals(_loggerExecCounter, 3);
+			assert.deepEqual(_loggerExecCounter, 3);
 
 			// we must see 3 logged attempts (first 2 are errors)
 			const { attempts } = await jobs.find(uid, true);
-			assertEquals(attempts?.length, 3);
-			assertEquals(attempts![0].status, ATTEMPT_STATUS.ERROR);
-			assertEquals(attempts![1].status, ATTEMPT_STATUS.ERROR);
-			assertEquals(attempts![2].status, ATTEMPT_STATUS.SUCCESS);
+			assert.deepEqual(attempts?.length, 3);
+			assert.deepEqual(attempts![0]!.status, ATTEMPT_STATUS.ERROR);
+			assert.deepEqual(attempts![1]!.status, ATTEMPT_STATUS.ERROR);
+			assert.deepEqual(attempts![2]!.status, ATTEMPT_STATUS.SUCCESS);
 			[0, 1].forEach((i) => {
-				assertEquals(attempts![i].error_message, "Boom");
-				assert(attempts![i].error_details!.stack);
+				assert.deepEqual(attempts![i]!.error_message, "Boom");
+				assert(attempts![i]!.error_details!.stack);
 			});
 
 			// teardown
@@ -185,8 +185,8 @@ testsRunner([
 			jobs.unsubscribeAll();
 
 			const all = await jobs.fetchAll();
-			assertEquals(all.length, 1);
-			assertEquals(all[0].status, JOB_STATUS.COMPLETED);
+			assert.deepEqual(all.length, 1);
+			assert.deepEqual(all[0]!.status, JOB_STATUS.COMPLETED);
 		},
 		// only: true,
 	},
@@ -219,22 +219,22 @@ testsRunner([
 			// sleep a while... (we need 3 process cycles)
 			await sleep(500);
 
-			assertEquals(_errorCounter, 5);
-			assertEquals(_executionCounter, 5);
-			assertEquals(doneCounter, 1);
+			assert.deepEqual(_errorCounter, 5);
+			assert.deepEqual(_executionCounter, 5);
+			assert.deepEqual(doneCounter, 1);
 
 			const { attempts } = await jobs.find(uid, true);
-			assertEquals(attempts!.length, 5);
+			assert.deepEqual(attempts!.length, 5);
 
 			// teardown
 			await jobs.stop();
 			jobs.unsubscribeAll();
 
 			const all = await jobs.fetchAll();
-			assertEquals(all.length, 1);
-			assertEquals(all[0].status, JOB_STATUS.FAILED);
+			assert.deepEqual(all.length, 1);
+			assert.deepEqual(all[0]!.status, JOB_STATUS.FAILED);
 
-			assertEquals(await jobs.fetchAll(JOB_STATUS.PENDING), []);
+			assert.deepEqual(await jobs.fetchAll(JOB_STATUS.PENDING), []);
 		},
 		// only: true,
 	},
@@ -257,7 +257,7 @@ testsRunner([
 			let r = await jobs.find(j.uid);
 
 			// no handler exists
-			assertEquals(r.job!.result, { noop: true });
+			assert.deepEqual(r.job!.result, { noop: true });
 
 			// register handler now
 			jobs.setHandler("foo", (_j: Job) => ({ foo: "handler" }));
@@ -269,7 +269,7 @@ testsRunner([
 			r = await jobs.find(j.uid);
 
 			// now must be handler
-			assertEquals(r.job!.result, { foo: "handler" });
+			assert.deepEqual(r.job!.result, { foo: "handler" });
 
 			// now unset handler
 			jobs.setHandler("foo", null);
@@ -280,7 +280,7 @@ testsRunner([
 			r = await jobs.find(j.uid);
 
 			// noop again
-			assertEquals(r.job!.result, { noop: true });
+			assert.deepEqual(r.job!.result, { noop: true });
 
 			// teardown
 			await jobs.stop();
@@ -319,7 +319,7 @@ testsRunner([
 			await createFoo(false); // completed
 
 			// console.log(jobs.__debugDump());
-			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 3);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 3);
 
 			await jobs.start(1);
 
@@ -329,8 +329,8 @@ testsRunner([
 			await jobs.stop();
 			jobs.unsubscribeAll();
 
-			assertEquals(failedCounter, 2);
-			assertEquals(completedCounter, 1);
+			assert.deepEqual(failedCounter, 2);
+			assert.deepEqual(completedCounter, 1);
 		},
 		// only: true,
 	},
@@ -411,10 +411,10 @@ testsRunner([
 			const r = await jobs.find(job.uid, true);
 			// console.log(r);
 
-			assertEquals(r.job!.status, JOB_STATUS.FAILED);
-			assertEquals(r.attempts?.length, 2);
-			assertEquals(r.attempts?.[0].error_message, "Execution timed out");
-			assertEquals(r.attempts?.[1].error_message, "Execution timed out");
+			assert.deepEqual(r.job!.status, JOB_STATUS.FAILED);
+			assert.deepEqual(r.attempts?.length, 2);
+			assert.deepEqual(r.attempts?.[0]?.error_message, "Execution timed out");
+			assert.deepEqual(r.attempts?.[1]?.error_message, "Execution timed out");
 
 			clearTimeout(ref.id);
 		},
@@ -433,24 +433,24 @@ testsRunner([
 			jobs.onDoneFor(job.uid, (j: Job) => onDoneLog.push(j));
 			jobs.onAttemptFor(job.uid, (j: Job) => onAttemptLog.push(j));
 
-			assertEquals(
+			assert.deepEqual(
 				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
 				1
 			);
-			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
 
 			await jobs.start(1);
 
 			await sleep(100);
 
-			assertEquals(onDoneLog.length, 1);
-			assertEquals(onAttemptLog.length, 2); // running + completed
+			assert.deepEqual(onDoneLog.length, 1);
+			assert.deepEqual(onAttemptLog.length, 2); // running + completed
 
-			assertEquals(
+			assert.deepEqual(
 				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
 				0
 			);
-			assertEquals(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
+			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
 
 			// teardown
 			await jobs.stop();
