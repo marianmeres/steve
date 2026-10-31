@@ -23,7 +23,7 @@ export async function _purge(
 	context: JobContext,
 	olderThanMinutes: number,
 	statuses: Job["status"][],
-	tenantIds: string[] | null = null
+	tenantIds: string[] | null = null,
 ): Promise<number> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
@@ -40,13 +40,13 @@ export async function _purge(
 	if (!wanted.length || invalid.length) {
 		throw new TypeError(
 			`purge: only terminal statuses (${PURGEABLE_STATUSES.join(", ")}) can be purged` +
-				(invalid.length ? `, got: ${invalid.join(", ")}` : "")
+				(invalid.length ? `, got: ${invalid.join(", ")}` : ""),
 		);
 	}
 
 	const params: unknown[] = [num, wanted];
 	let tenantPredicate = "";
-	if (tenantIds && tenantIds.length) {
+	if (tenantIds?.length) {
 		params.push(tenantIds);
 		tenantPredicate = `AND tenant_id = ANY($${params.length}::varchar[])`;
 	}
@@ -56,7 +56,7 @@ export async function _purge(
 		WHERE status = ANY($2::varchar[])
 			AND COALESCE(completed_at, updated_at) < NOW() - ($1::bigint || ' minutes')::interval
 			${tenantPredicate}`,
-		params
+		params,
 	);
 
 	return rowCount ?? 0;

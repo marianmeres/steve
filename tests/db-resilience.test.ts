@@ -1,15 +1,15 @@
-import type pg from "pg";
-import { Jobs } from "../src/index.ts";
-import { testsRunner } from "./_tests-runner.ts";
 import assert from "node:assert/strict";
+import type pg from "pg";
+import { Jobs, type JobsOptions } from "../src/index.ts";
+import { checkDbHealth } from "../src/steve/utils/db-health.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { withDbRetry } from "../src/steve/utils/with-db-retry.ts";
-import { checkDbHealth } from "../src/steve/utils/db-health.ts";
+import { testsRunner } from "./_tests-runner.ts";
 
 const tablePrefix = "_db_resilience_";
 const pollTimeoutMs = 100;
 
-async function _createJobs(db: pg.Client | pg.Pool, options: any = {}) {
+async function _createJobs(db: pg.Client | pg.Pool, options: Partial<JobsOptions> = {}) {
 	const jobs = new Jobs({
 		db,
 		logger: { debug: () => {}, error: () => {}, warn: () => {}, log: () => {} },
@@ -26,7 +26,7 @@ async function _createJobs(db: pg.Client | pg.Pool, options: any = {}) {
 testsRunner([
 	{
 		name: "withDbRetry: succeeds on first attempt",
-		async fn({ db }) {
+		async fn() {
 			let attempts = 0;
 			const result = await withDbRetry(async () => {
 				attempts++;
@@ -39,16 +39,16 @@ testsRunner([
 	},
 	{
 		name: "withDbRetry: retries on retryable error",
-		async fn({ db }) {
+		async fn() {
 			let attempts = 0;
 
 			const result = await withDbRetry(
 				async () => {
 					attempts++;
 					if (attempts < 3) {
-						const err: any = new Error("Connection failed");
-						err.code = "ECONNREFUSED";
-						throw err;
+						throw Object.assign(new Error("Connection failed"), {
+							code: "ECONNREFUSED",
+						});
 					}
 					return "success";
 				},
@@ -56,7 +56,7 @@ testsRunner([
 					maxRetries: 5,
 					initialDelayMs: 10,
 					maxDelayMs: 100,
-				}
+				},
 			);
 
 			assert.deepEqual(result, "success");
@@ -65,7 +65,7 @@ testsRunner([
 	},
 	{
 		name: "withDbRetry: does not retry non-retryable error",
-		async fn({ db }) {
+		async fn() {
 			let attempts = 0;
 
 			try {
@@ -77,36 +77,36 @@ testsRunner([
 					{
 						maxRetries: 5,
 						initialDelayMs: 10,
-					}
+					},
 				);
 				assert(false, "Should have thrown");
-			} catch (e: any) {
-				assert.deepEqual(e.message, "Some non-retryable error");
+			} catch (e) {
+				assert.deepEqual((e as Error).message, "Some non-retryable error");
 				assert.deepEqual(attempts, 1); // no retries
 			}
 		},
 	},
 	{
 		name: "withDbRetry: throws after max retries exceeded",
-		async fn({ db }) {
+		async fn() {
 			let attempts = 0;
 
 			try {
 				await withDbRetry(
 					async () => {
 						attempts++;
-						const err: any = new Error("Connection timeout");
-						err.code = "ETIMEDOUT";
-						throw err;
+						throw Object.assign(new Error("Connection timeout"), {
+							code: "ETIMEDOUT",
+						});
 					},
 					{
 						maxRetries: 2,
 						initialDelayMs: 10,
-					}
+					},
 				);
 				assert(false, "Should have thrown");
-			} catch (e: any) {
-				assert.deepEqual(e.message, "Connection timeout");
+			} catch (e) {
+				assert.deepEqual((e as Error).message, "Connection timeout");
 				assert.deepEqual(attempts, 3); // initial + 2 retries
 			}
 		},

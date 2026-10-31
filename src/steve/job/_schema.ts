@@ -88,10 +88,7 @@ export function _schemaCreate(context: Pick<JobContext, "tableNames">): string {
 	`;
 }
 
-export async function _initialize(
-	context: JobContext,
-	hard = false
-): Promise<void> {
+export async function _initialize(context: JobContext, hard = false): Promise<void> {
 	const { db, tableNames } = context;
 
 	const sql = [hard && _schemaDrop(context), _schemaCreate(context)]

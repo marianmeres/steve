@@ -28,8 +28,8 @@ The npm package targets Node >= 24.12.
 ### Job handlers
 
 Job handling function(s) can be specified via constructor options either as a single
-`jobHandler` function or as a `jobHandlers` functions map (keyed by job type). Both options 
-`jobHandlers` and `jobHandler` can be used together, where the `jobHandlers` map will 
+`jobHandler` function or as a `jobHandlers` functions map (keyed by job type). Both options
+`jobHandlers` and `jobHandler` can be used together, where the `jobHandlers` map will
 have priority and `jobHandler` will act as a fallback.
 
 If none of the `jobHandlers` or `jobHandler` options is specified, the system will still be
@@ -124,8 +124,8 @@ jobs.onAttempt('my_job_type', (job: Job) => {
 });
 ```
 
-Note that the `onAttempt` is fired twice for each "physical" attempt - once just when 
-the job is claimed and is starting the execution (with status `running`) and once when 
+Note that the `onAttempt` is fired twice for each "physical" attempt - once just when
+the job is claimed and is starting the execution (with status `running`) and once when
 the execution is done (with one of the `completed`, `failed` or `pending`).
 
 **Events are in-process.** They are published by the `Jobs` instance that finalizes the
@@ -318,7 +318,7 @@ For complete API documentation, types, and interfaces, see [API.md](API.md).
 
 ![](./demo-monitor.png "Demo monitor")
 
-Steve comes with toy example of jobs monitoring ([server](example/server.ts) 
+Steve comes with toy example of jobs monitoring ([server](example/server.ts)
 and [client](example/index.html)). To run it locally follow these steps:
 
 ```shell
@@ -327,7 +327,7 @@ cd steve
 cp .env.example .env
 ```
 
-Now edit the `.env` and set `EXAMPLE_PG_*` postgres credentials. Then, finally, 
+Now edit the `.env` and set `EXAMPLE_PG_*` postgres credentials. Then, finally,
 install the deps and run the server:
 
 ```shell
@@ -348,7 +348,7 @@ PostgreSQL database: copy `.env.example` to `.env` and set the `TEST_PG_*` crede
 | `pnpm install`                      | installs the deps and the dev tooling                       |
 | `pnpm test` / `pnpm run test:watch` | `node --test` over `tests/**/*.test.ts`, one file at a time |
 | `pnpm run typecheck`                | `tsc --noEmit` over `src`, `tests` and `example`            |
-| `pnpm run lint` / `pnpm run format` | `biome check .` read-only / with `--write`                  |
+| `pnpm run lint` / `pnpm run format` | `biome check` read-only, warnings fail / with `--write`     |
 | `pnpm run ci`                       | typecheck + lint + test, what CI runs                       |
 | `pnpm run build`                    | `tsc -p tsconfig.build.json` → `dist/`                      |
 | `pnpm run example`                  | the jobs monitor example above                              |
@@ -385,8 +385,8 @@ need code changes, but a few behaviors differ:
 opt-in; **single-tenant / tenant-unaware users need no code or behavior changes**.
 
 - **`Job` now always carries a `tenant_id: string | null` field.** This is the only
-  breaking change and it is **type-level only**: code that *reads* `Job` is unaffected
-  (the field is simply present, `null` for un-scoped jobs); code that *constructs* `Job`
+  breaking change and it is **type-level only**: code that _reads_ `Job` is unaffected
+  (the field is simply present, `null` for un-scoped jobs); code that _constructs_ `Job`
   object literals (mocks/fixtures) must add `tenant_id`.
 - **The `__job` table auto-gains a nullable `tenant_id` column** on next start via
   `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (metadata-only — instant, no table rewrite;

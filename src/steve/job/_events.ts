@@ -12,7 +12,7 @@ export function _safeInvoke(
 	context: Pick<JobContext, "logger">,
 	cb: JobAwareFn,
 	job: Job,
-	label: string
+	label: string,
 ): void {
 	const report = (e: unknown) =>
 		context.logger?.error?.(`${label} callback (job ${job.uid}): ${e}`);

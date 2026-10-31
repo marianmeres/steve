@@ -1,22 +1,18 @@
-import type pg from "pg";
-import { type Job, JOB_STATUS, Jobs } from "../src/index.ts";
-import { testsRunner } from "./_tests-runner.ts";
-
 import assert from "node:assert/strict";
+import type pg from "pg";
+import { JOB_STATUS, type Job, Jobs } from "../src/index.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
+import { testsRunner } from "./_tests-runner.ts";
 
 const silent = { debug() {}, error() {}, warn() {}, log() {} };
 const tablePrefix = "_tenant_";
 const pollTimeoutMs = 100;
 
-async function _createJobs(
-	db: pg.Client | pg.Pool,
-	jobHandler?: (job: Job) => unknown,
-) {
+async function _createJobs(db: pg.Client | pg.Pool, jobHandler?: (job: Job) => unknown) {
 	const jobs = new Jobs({
 		db,
 		jobHandler,
-		logger: silent as any,
+		logger: silent,
 		gracefulSigterm: false,
 		pollTimeoutMs,
 		tablePrefix,
@@ -204,7 +200,7 @@ testsRunner([
 			// which self-heals the existing table via ADD COLUMN IF NOT EXISTS
 			const jobs = new Jobs({
 				db,
-				logger: silent as any,
+				logger: silent,
 				gracefulSigterm: false,
 				tablePrefix: prefix,
 			});

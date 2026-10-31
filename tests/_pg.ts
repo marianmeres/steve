@@ -13,7 +13,7 @@ const config = {
 	user: PG_USER,
 	database: PG_DATABASE,
 	password: PG_PASSWORD,
-	port: parseInt(PG_PORT),
+	port: parseInt(PG_PORT, 10),
 };
 
 export function createPg() {

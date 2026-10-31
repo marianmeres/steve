@@ -37,12 +37,10 @@ export function isPool(db: pg.Pool | pg.Client): db is pg.Pool {
  */
 export async function withTransaction<T>(
 	db: pg.Pool | pg.Client,
-	fn: (client: pg.PoolClient | pg.Client) => Promise<T>
+	fn: (client: pg.PoolClient | pg.Client) => Promise<T>,
 ): Promise<T> {
 	const pool = isPool(db);
-	const client = pool
-		? await (db as pg.Pool).connect()
-		: (db as pg.Client);
+	const client = pool ? await (db as pg.Pool).connect() : (db as pg.Client);
 	try {
 		await client.query("BEGIN");
 		try {

@@ -1,5 +1,5 @@
-import type { Job, JobAwareFn, JobContext, JobCreateDTO } from "../jobs.ts";
 import { dataToSqlParams } from "@marianmeres/data-to-sql-params";
+import type { Job, JobAwareFn, JobContext, JobCreateDTO } from "../jobs.ts";
 
 /** Coerce/validate `run_at` inputs; throws a clear error for invalid dates. */
 function normalizeRunAt(v: unknown): string | null {
@@ -7,7 +7,7 @@ function normalizeRunAt(v: unknown): string | null {
 	const d = v instanceof Date ? v : new Date(v as string | number);
 	if (Number.isNaN(d.getTime())) {
 		throw new TypeError(
-			`Invalid 'run_at' value: ${JSON.stringify(v)} is not a valid Date`
+			`Invalid 'run_at' value: ${JSON.stringify(v)} is not a valid Date`,
 		);
 	}
 	return d.toISOString();
@@ -16,7 +16,7 @@ function normalizeRunAt(v: unknown): string | null {
 export async function _create(
 	context: JobContext,
 	data: JobCreateDTO,
-	onDone?: JobAwareFn
+	onDone?: JobAwareFn,
 ): Promise<Job> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;

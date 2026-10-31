@@ -9,7 +9,7 @@ export function testsRunner(
 		only?: boolean;
 		ignore?: boolean;
 		raw?: boolean;
-	}[]
+	}[],
 ) {
 	for (const def of tests) {
 		const { name, ignore, only } = def;
@@ -18,17 +18,15 @@ export function testsRunner(
 			name,
 			{ skip: ignore, only },
 			def.raw
-				? () => def.fn({ db: null as any })
+				? () => def.fn({ db: null as unknown as pg.Pool })
 				: async () => {
 						const db = createPg();
 						try {
 							await def.fn({ db });
-						} catch (e) {
-							throw e;
 						} finally {
 							await db?.end();
 						}
-				  }
+					},
 		);
 	}
 }

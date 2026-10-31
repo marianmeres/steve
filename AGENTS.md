@@ -68,7 +68,7 @@ src/
 - [ ] `job/_*.ts` modules are imported by `jobs.ts`: never read `JOB_STATUS` / `BACKOFF_STRATEGY` at module top level (circular-import TDZ) — only inside functions
 - [ ] The reaper (`_mark-expired.ts`) measures `updated_at`, never `started_at`
 - [ ] Run the full gate: `pnpm run ci` (typecheck + Biome + tests); `pnpm run test:deno`
-      too before a JSR publish
+  too before a JSR publish
 - [ ] Ensure PostgreSQL test database is available (see `.env.example`)
 
 ## Public API Exports
@@ -76,14 +76,17 @@ src/
 From `src/index.ts`:
 
 ### Classes
+
 - `Jobs` - Main job manager class
 - `DbHealthMonitor` - Periodic DB health monitor (re-exported)
 
 ### Functions
+
 - `withDbRetry<T>(fn, options?)` - Wraps async function with retry logic
 - `checkDbHealth(db, logger?)` - One-time database health check
 
 ### Interfaces
+
 - `Job` - Job row representation (`status` union includes `"expired"`); `find()` yields `job: Job | undefined`
 - `JobAttempt` - Attempt log entry
 - `JobCreateOptions` - Options for creating jobs
@@ -96,11 +99,13 @@ From `src/index.ts`:
 - `DbHealthStatus` - Health check result
 
 ### Types
+
 - `JobHandler` - `(job: Job, signal?: AbortSignal) => unknown | Promise<unknown>`
 - `JobHandlersMap` - `Record<string, JobHandler | null | undefined>`
 - `JobAwareFn` - `(job: Job) => void | Promise<void>`
 
 ### Constants
+
 - `JOB_STATUS` - `{ PENDING, RUNNING, COMPLETED, FAILED, EXPIRED }`
 - `ATTEMPT_STATUS` - `{ SUCCESS, ERROR }`
 - `BACKOFF_STRATEGY` - `{ NONE, EXP }`
@@ -123,40 +128,43 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 `tenant_id` (see Tenancy below).
 
 ### `__job`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | SERIAL | Primary key |
-| uid | UUID | Unique identifier |
-| type | VARCHAR | Job type for routing |
-| payload | JSONB | Custom job data |
-| tenant_id | VARCHAR(255) | Optional, nullable audit/scoping tag. NULL = global/un-scoped. No FK. |
-| result | JSONB | Handler return value |
-| status | VARCHAR | pending/running/completed/failed/expired |
-| attempts | INT | Attempt count (1-based after claim) |
-| max_attempts | INT | Max retry attempts |
-| max_attempt_duration_ms | INT | Timeout per attempt (0 = unlimited) |
-| backoff_strategy | VARCHAR | none/exp |
-| created_at | TIMESTAMPTZ | Creation time |
-| updated_at | TIMESTAMPTZ | Last update |
-| started_at | TIMESTAMPTZ | First execution start (preserved across retries via COALESCE) |
-| completed_at | TIMESTAMPTZ | Final completion (set for completed, failed, AND expired) |
-| run_at | TIMESTAMPTZ | Scheduled execution time |
+
+| Column                  | Type         | Description                                                           |
+| ----------------------- | ------------ | --------------------------------------------------------------------- |
+| id                      | SERIAL       | Primary key                                                           |
+| uid                     | UUID         | Unique identifier                                                     |
+| type                    | VARCHAR      | Job type for routing                                                  |
+| payload                 | JSONB        | Custom job data                                                       |
+| tenant_id               | VARCHAR(255) | Optional, nullable audit/scoping tag. NULL = global/un-scoped. No FK. |
+| result                  | JSONB        | Handler return value                                                  |
+| status                  | VARCHAR      | pending/running/completed/failed/expired                              |
+| attempts                | INT          | Attempt count (1-based after claim)                                   |
+| max_attempts            | INT          | Max retry attempts                                                    |
+| max_attempt_duration_ms | INT          | Timeout per attempt (0 = unlimited)                                   |
+| backoff_strategy        | VARCHAR      | none/exp                                                              |
+| created_at              | TIMESTAMPTZ  | Creation time                                                         |
+| updated_at              | TIMESTAMPTZ  | Last update                                                           |
+| started_at              | TIMESTAMPTZ  | First execution start (preserved across retries via COALESCE)         |
+| completed_at            | TIMESTAMPTZ  | Final completion (set for completed, failed, AND expired)             |
+| run_at                  | TIMESTAMPTZ  | Scheduled execution time                                              |
 
 ### `__job_attempt_log`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | SERIAL | Primary key |
-| job_id | INT | Foreign key to __job (ON DELETE CASCADE) |
-| attempt_number | INT | Sequential attempt number |
-| started_at | TIMESTAMPTZ | Attempt start |
-| completed_at | TIMESTAMPTZ | Attempt end |
-| status | VARCHAR | success/error |
-| error_message | TEXT | Error message if failed |
-| error_details | JSONB | Full error with stack trace |
+
+| Column         | Type        | Description                              |
+| -------------- | ----------- | ---------------------------------------- |
+| id             | SERIAL      | Primary key                              |
+| job_id         | INT         | Foreign key to __job (ON DELETE CASCADE) |
+| attempt_number | INT         | Sequential attempt number                |
+| started_at     | TIMESTAMPTZ | Attempt start                            |
+| completed_at   | TIMESTAMPTZ | Attempt end                              |
+| status         | VARCHAR     | success/error                            |
+| error_message  | TEXT        | Error message if failed                  |
+| error_details  | JSONB       | Full error with stack trace              |
 
 ## Key Behaviors
 
 ### Job Claiming
+
 - Uses `FOR UPDATE SKIP LOCKED` for atomic claiming across workers
 - `ORDER BY run_at, id` — fair for mixed scheduled/immediate jobs
 - `started_at` is set with `COALESCE(started_at, NOW())` → preserved across retries
@@ -165,28 +173,33 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 - Handler dispatch is a `Map` lookup (`#jobHandlers.get(type)`), so types like `constructor` / `__proto__` can't resolve to `Object.prototype` members
 
 ### Execution & Finalization (`_execute.ts`)
+
 - `try/catch` wraps the handler call ONLY. Finalization and callback fan-out run outside it, so a consumer-callback error can never be misattributed to the job
 - `_handleJobSuccess` / `_handleJobFailure` UPDATE `WHERE id = $1 AND status = 'running' AND attempts = $n` and return `Job | null`. `null` = somebody else finalized the row meanwhile (reaper → `expired`): the attempt log row is still written, a warning is logged, no events are published, the terminal state stays
 - Consequence: `expired` is truly terminal; a late handler never resurrects a job and `onDone` fires at most once per terminal transition
 
 ### Transactions
+
 - `_handleJobSuccess`, `_handleJobFailure`, `_initialize`, `_uninstall` all use `withTransaction()`
 - `withTransaction` acquires a dedicated pool client, runs BEGIN + work + COMMIT on that client, and ROLLBACK on error
 - **Never use `pool.query("BEGIN")`** for transactional code — pool.query can acquire a different connection per call
 
 ### Retry Logic
+
 - Default: 3 attempts with exponential backoff
 - Formula: `min(2^attempts × 1000ms, 1 hour)` (capped)
 - Configurable via `max_attempts` and `backoff_strategy`
 - `dbRetry` option wraps every DB call (claim, create, find, handlers, cleanup) with transient-error retry
 
 ### Timeouts & AbortSignal
+
 - When `max_attempt_duration_ms > 0`, the handler receives an `AbortSignal` as its second arg
 - On timeout: the attempt is recorded as failed AND `signal.abort()` fires
 - Cooperative handlers should check `signal.aborted` or attach listeners to bail early
 - JavaScript cannot forcibly kill a running Promise — handlers that ignore the signal keep running in the background
 
 ### Job Status Flow
+
 ```
 PENDING → RUNNING → COMPLETED
                   ↘ PENDING (retry with backoff)
@@ -195,16 +208,19 @@ PENDING → RUNNING → COMPLETED
 ```
 
 ### Cleanup / Expired Reaper
+
 - `jobs.cleanup(maxMinutes?)` marks stuck-`running` rows as `expired`, sets `completed_at`, and fires `onDone` for each
 - "Stuck" = `updated_at < NOW() - threshold` (current attempt's claim time). NEVER `started_at`: that is the first attempt's start and would reap legitimate retries whose cumulative backoff exceeds the threshold
 - Pass `autoCleanup: true` (or a config) to run the reaper automatically on a timer (default: every 60s, threshold 5min). `stop()` awaits an in-flight tick; a tick that outlives its `stop()` sees a bumped `#lifecycleGen` and does not reschedule
 - Expired status is terminal (no auto-retry, never overwritten by a late handler) — work may be stale by the time we notice
 
 ### Retention (`purge`)
+
 - Nothing deletes finished jobs automatically. `jobs.purge(olderThanMinutes?, { statuses?, tenant_id? })` DELETEs terminal rows by `COALESCE(completed_at, updated_at)`; attempt log cascades via FK
 - Only `completed` / `failed` / `expired` are purgeable; anything else throws `TypeError`. All values bound, never interpolated
 
 ### Graceful Shutdown
+
 - `start()` is idempotent (second call is a no-op with a warning) and THROWS on init failure
 - `start(n > 1)` THROWS when `db` is a `pg.Client`: concurrent `withTransaction` calls on one connection interleave BEGIN/COMMIT/ROLLBACK (verified: one caller's ROLLBACK discards the other's uncommitted writes). Pool for concurrency
 - SIGTERM handler is added on `start()` and removed on `stop()` (no listener leak across instances)
@@ -213,12 +229,14 @@ PENDING → RUNNING → COMPLETED
 - `resetHard()` always runs `_initialize(hard)`, even on an initialized instance
 
 ### Events
+
 - ALL events are in-process: published by the instance that finalizes the job (its processors / its `cleanup()`), never via the DB. A process that only creates jobs sees nothing; per-uid registrations there leak until `unsubscribeAll()` — documented, not solved
 - Type-keyed subscribers are wrapped in `#onEvent` (try/await/catch); per-uid callbacks (`onDoneFor`, `onAttemptFor`, `create(..., onDone)`) go through `_events.ts` `_safeInvoke` (sync throw caught, returned promise gets a rejection handler). A consumer error is logged and dropped — it never touches the job
 - `#onEventWraps` is per-instance and keyed by `(type, cb)` — safe for callbacks shared across Jobs instances and for multi-type subscribe+unsubscribe
 - `unsubscribeAll()` clears the pubsubs, the internal wrap registry AND both per-uid maps
 
 ### Tenancy (`tenant_id`)
+
 - **Optional, audit-only, no FK.** `tenant_id` is a nullable `VARCHAR(255)` tag on `__job` only (NOT on the attempt-log table — reachable via `job_id`). It follows the ecosystem `tenant_id` convention but deliberately omits the `tenantIdFk`/registry coupling: a job queue is infrastructure, and `ON DELETE CASCADE` would destroy the very audit trail the column exists for.
 - **NULL = global/un-scoped**, chosen over a `NOT NULL DEFAULT 'default'` sentinel so infra jobs are represented honestly and the self-heal `ALTER` stays metadata-only.
 - **Write path:** `create(type, payload, { tenant_id })`. In `_create.ts` the allowlist transformer returns `undefined` for empty/null, so `dataToSqlParams` OMITS the column and a no-tenant INSERT is byte-identical to pre-tenant steve (DB applies NULL). `Jobs.create` forwards `tenant_id` into the DTO unconditionally (undefined when absent — same convention as `run_at`).
@@ -248,7 +266,9 @@ PENDING → RUNNING → COMPLETED
    (`src`, `tests` and `example`).
 3. **Formatting**: Biome (tabs, 4 wide, 90 cols, double quotes, trailing commas; manifests
    2 spaces). `pnpm run format` before committing; `pnpm run lint` is the read-only check CI
-   runs. `example/index.html` is excluded (it inlines vendor CSS).
+   runs. `example/index.html` is excluded (it inlines vendor CSS). Lint runs with
+   `--error-on-warnings`, so a warning fails CI; `noNonNullAssertion` is off for `tests/**`
+   and `example/**`.
 4. **Versioning / releasing** (human action): `package.json` is the manifest of record;
    `jsr.json` has no `version`. `pnpm run rp` / `rpm` = `@marianmeres/release` via npx
    (bump, commit, tag, push), then `pnpm publish` (`prepublishOnly`: `ci` + `build`), then
@@ -287,6 +307,7 @@ Test files:
 ## Common Patterns
 
 ### Basic Usage
+
 ```typescript
 const jobs = new Jobs({
   db: pgPool,
@@ -303,6 +324,7 @@ await jobs.create("type", { data: true });
 ```
 
 ### Type-Specific Handlers
+
 ```typescript
 const jobs = new Jobs({
   db: pgPool,
@@ -314,6 +336,7 @@ const jobs = new Jobs({
 ```
 
 ### Event Listening
+
 ```typescript
 jobs.onDone("email", (job) => {
   // fires for completed, failed (terminal), OR expired (via cleanup)
@@ -331,6 +354,7 @@ jobs.onAttempt("email", (job) => {
 ```
 
 ### Health Monitoring
+
 ```typescript
 const jobs = new Jobs({
   db: pgPool,
@@ -345,15 +369,15 @@ const jobs = new Jobs({
 
 ## File Locations
 
-| Purpose | Path |
-|---------|------|
-| Main entry | `src/index.ts` |
-| Jobs class | `src/steve/jobs.ts` |
-| Retry utility | `src/steve/utils/with-db-retry.ts` |
-| Transaction utility | `src/steve/utils/with-transaction.ts` |
-| Health utility | `src/steve/utils/db-health.ts` |
-| Timeout/AbortSignal | `src/steve/utils/with-timeout.ts` |
-| Tests | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
-| Example server | `example/server.ts` |
-| Config | `package.json`, `jsr.json`, `tsconfig.json`, `biome.json` |
-| CI | `.github/workflows/ci.yml` (Node + a PostgreSQL service) |
+| Purpose             | Path                                                                                                                         |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Main entry          | `src/index.ts`                                                                                                               |
+| Jobs class          | `src/steve/jobs.ts`                                                                                                          |
+| Retry utility       | `src/steve/utils/with-db-retry.ts`                                                                                           |
+| Transaction utility | `src/steve/utils/with-transaction.ts`                                                                                        |
+| Health utility      | `src/steve/utils/db-health.ts`                                                                                               |
+| Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                            |
+| Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
+| Example server      | `example/server.ts`                                                                                                          |
+| Config              | `package.json`, `jsr.json`, `tsconfig.json`, `biome.json`                                                                    |
+| CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                     |

@@ -4,12 +4,12 @@ import type { HealthPreviewRow, JobContext } from "../jobs.ts";
 export async function _healthPreview(
 	context: JobContext,
 	sinceMinutesAgo = 60,
-	tenantIds: string[] | null = null
+	tenantIds: string[] | null = null,
 ): Promise<HealthPreviewRow[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
-	sinceMinutesAgo = parseInt(`${sinceMinutesAgo}`);
+	sinceMinutesAgo = parseInt(`${sinceMinutesAgo}`, 10);
 	if (Number.isNaN(sinceMinutesAgo)) {
 		sinceMinutesAgo = 60;
 	}
@@ -18,7 +18,7 @@ export async function _healthPreview(
 	// values are caller-supplied and MUST be bound, never interpolated.
 	const conditions = [`created_at > NOW() - INTERVAL '${sinceMinutesAgo} minute'`];
 	const params: unknown[] = [];
-	if (tenantIds && tenantIds.length) {
+	if (tenantIds?.length) {
 		params.push(tenantIds);
 		conditions.push(`tenant_id = ANY($${params.length}::varchar[])`);
 	}
@@ -31,7 +31,7 @@ export async function _healthPreview(
 		FROM ${tableJobs}
 		WHERE ${conditions.join(" AND ")}
 		GROUP BY status;`,
-		params.length ? params : undefined
+		params.length ? params : undefined,
 	);
 
 	return rows;

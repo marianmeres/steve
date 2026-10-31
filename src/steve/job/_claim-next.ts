@@ -1,4 +1,4 @@
-import { type JobContext, JOB_STATUS } from "../jobs.ts";
+import { JOB_STATUS, type JobContext } from "../jobs.ts";
 
 /**
  * Atomically marks the next pending, ready-to-run job as running and returns it.

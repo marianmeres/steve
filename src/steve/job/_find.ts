@@ -8,8 +8,7 @@ function coerceMinutes(v: unknown, fallback: number): number {
 	return Math.max(0, Math.trunc(n));
 }
 
-const UUID_RE =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Internal select one (optional tenant guard; no-tenant path is byte-identical).
@@ -21,7 +20,7 @@ const UUID_RE =
 export async function _find(
 	context: JobContext,
 	uid: string,
-	tenantId: string | null = null
+	tenantId: string | null = null,
 ): Promise<Job | undefined> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
@@ -29,16 +28,15 @@ export async function _find(
 	if (typeof uid !== "string" || !UUID_RE.test(uid)) return undefined;
 
 	if (tenantId == null) {
-		const { rows } = await db.query(
-			`SELECT * FROM ${tableJobs} WHERE uid = $1`,
-			[uid]
-		);
+		const { rows } = await db.query(`SELECT * FROM ${tableJobs} WHERE uid = $1`, [
+			uid,
+		]);
 		return rows[0] as Job | undefined;
 	}
 
 	const { rows } = await db.query(
 		`SELECT * FROM ${tableJobs} WHERE uid = $1 AND tenant_id = $2`,
-		[uid, tenantId]
+		[uid, tenantId],
 	);
 	return rows[0] as Job | undefined;
 }
@@ -52,14 +50,9 @@ export async function _fetchAll(
 		offset: number | string;
 		asc: number | string | boolean;
 		sinceMinutesAgo: number;
-	}> = {}
+	}> = {},
 ): Promise<Job[]> {
-	const {
-		limit = 10,
-		offset = 0,
-		asc = false,
-		sinceMinutesAgo = 30,
-	} = options || {};
+	const { limit = 10, offset = 0, asc = false, sinceMinutesAgo = 30 } = options || {};
 
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;

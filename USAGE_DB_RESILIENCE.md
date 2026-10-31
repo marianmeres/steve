@@ -156,13 +156,13 @@ app.get('/health', (req, res) => {
 
 ### DbRetryOptions
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `maxRetries` | number | 3 | Maximum number of retry attempts |
-| `initialDelayMs` | number | 100 | Initial delay before first retry (ms) |
-| `maxDelayMs` | number | 5000 | Maximum delay between retries (ms) |
-| `backoffMultiplier` | number | 2 | Multiplier for exponential backoff |
-| `retryableErrors` | string[] | See below | Error codes that trigger retry |
+| Option              | Type     | Default   | Description                           |
+| ------------------- | -------- | --------- | ------------------------------------- |
+| `maxRetries`        | number   | 3         | Maximum number of retry attempts      |
+| `initialDelayMs`    | number   | 100       | Initial delay before first retry (ms) |
+| `maxDelayMs`        | number   | 5000      | Maximum delay between retries (ms)    |
+| `backoffMultiplier` | number   | 2         | Multiplier for exponential backoff    |
+| `retryableErrors`   | string[] | See below | Error codes that trigger retry        |
 
 **Default Retryable Errors:**
 - `ECONNREFUSED` - Connection refused
@@ -176,11 +176,11 @@ app.get('/health', (req, res) => {
 
 ### DbHealthCheckOptions
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `intervalMs` | number | 30000 | How often to check health (ms) |
+| Option        | Type     | Default   | Description                        |
+| ------------- | -------- | --------- | ---------------------------------- |
+| `intervalMs`  | number   | 30000     | How often to check health (ms)     |
 | `onUnhealthy` | function | undefined | Callback when DB becomes unhealthy |
-| `onHealthy` | function | undefined | Callback when DB recovers |
+| `onHealthy`   | function | undefined | Callback when DB recovers          |
 
 ### DbHealthStatus
 

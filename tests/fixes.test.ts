@@ -1,17 +1,10 @@
-import type pg from "pg";
-import {
-	Jobs,
-	JOB_STATUS,
-	type Job,
-	type JobHandler,
-} from "../src/index.ts";
-import { testsRunner } from "./_tests-runner.ts";
 import assert from "node:assert/strict";
+import type pg from "pg";
+import { JOB_STATUS, type Job, type JobHandler, Jobs } from "../src/index.ts";
+import type { JobContext } from "../src/steve/jobs.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
-import {
-	isPool,
-	withTransaction,
-} from "../src/steve/utils/with-transaction.ts";
+import { isPool, withTransaction } from "../src/steve/utils/with-transaction.ts";
+import { testsRunner } from "./_tests-runner.ts";
 
 const tablePrefix = "_fixes_";
 const pollTimeoutMs = 100;
@@ -47,7 +40,7 @@ async function _createJobs(db: pg.Client | pg.Pool, opts: CreateJobsOptions = {}
  */
 async function waitFor(
 	predicate: () => boolean | Promise<boolean>,
-	{ timeoutMs = 1000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {}
+	{ timeoutMs = 1000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {},
 ): Promise<boolean> {
 	const ref = { id: -1 };
 	const deadline = Date.now() + timeoutMs;
@@ -73,7 +66,6 @@ testsRunner([
 			const commands: { clientIdx: number; sql: string }[] = [];
 			const originalConnect = (db as pg.Pool).connect.bind(db);
 			let clientCounter = 0;
-			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			(db as pg.Pool).connect = (async (...args: unknown[]) => {
 				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				const client = await (originalConnect as any)(...args);
@@ -99,7 +91,11 @@ testsRunner([
 				});
 
 				const clientIndexes = new Set(commands.map((c) => c.clientIdx));
-				assert.deepEqual(clientIndexes.size, 1, "all queries must share one client");
+				assert.deepEqual(
+					clientIndexes.size,
+					1,
+					"all queries must share one client",
+				);
 				const sqlTypes = commands.map((c) => c.sql.split(" ")[0]!);
 				assert.deepEqual(sqlTypes[0], "BEGIN");
 				assert.deepEqual(sqlTypes[sqlTypes.length - 1], "COMMIT");
@@ -114,7 +110,6 @@ testsRunner([
 		async fn({ db }) {
 			const events: string[] = [];
 			const originalConnect = (db as pg.Pool).connect.bind(db);
-			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 			(db as pg.Pool).connect = (async (...args: unknown[]) => {
 				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				const client = await (originalConnect as any)(...args);
@@ -135,7 +130,7 @@ testsRunner([
 						withTransaction(db, async () => {
 							throw new Error("boom");
 						}),
-					{ message: /boom/ }
+					{ message: /boom/ },
 				);
 				assert(events.includes("BEGIN"));
 				assert(events.includes("ROLLBACK"));
@@ -301,7 +296,7 @@ testsRunner([
 						updated_at = NOW() - INTERVAL '10 minutes',
 						attempts = 1
 					 WHERE id = $1`,
-					[created.id]
+					[created.id],
 				);
 
 				const reaped = await jobs.cleanup(5);
@@ -325,7 +320,7 @@ testsRunner([
 					started_at = NOW() - INTERVAL '2 minutes',
 					updated_at = NOW() - INTERVAL '2 minutes'
 				 WHERE id = $1`,
-				[created.id]
+				[created.id],
 			);
 			const reaped = await jobs.cleanup(5);
 			assert.deepEqual(reaped, 0);
@@ -442,13 +437,16 @@ testsRunner([
 				const { uid } = await jobs.create(
 					"foo",
 					{},
-					{ backoff_strategy: "none", max_attempts: 3 }
+					{ backoff_strategy: "none", max_attempts: 3 },
 				);
 				await jobs.start(1);
-				await waitFor(async () => {
-					const { job } = await jobs.find(uid);
-					return job?.status === JOB_STATUS.COMPLETED;
-				}, { timeoutMs: 2000 });
+				await waitFor(
+					async () => {
+						const { job } = await jobs.find(uid);
+						return job?.status === JOB_STATUS.COMPLETED;
+					},
+					{ timeoutMs: 2000 },
+				);
 
 				const job = (await jobs.find(uid)).job!;
 				assert.deepEqual(job.status, JOB_STATUS.COMPLETED);
@@ -458,7 +456,7 @@ testsRunner([
 					new Date(job.created_at).valueOf();
 				assert(
 					startDelayMs < 500,
-					`started_at delay ${startDelayMs}ms too large — was started_at reset on retry?`
+					`started_at delay ${startDelayMs}ms too large — was started_at reset on retry?`,
 				);
 			} finally {
 				await jobs.stop();
@@ -492,13 +490,13 @@ testsRunner([
 						backoff_strategy: "none",
 						max_attempts: 1,
 						max_attempt_duration_ms: 50,
-					}
+					},
 				);
 				await jobs.start(1);
 				await waitFor(() => abortedRef.value, { timeoutMs: 2000 });
 				assert(
 					abortedRef.value,
-					"handler must receive AbortSignal.abort on timeout"
+					"handler must receive AbortSignal.abort on timeout",
 				);
 			} finally {
 				await jobs.stop();
@@ -517,7 +515,7 @@ testsRunner([
 			await assert.rejects(
 				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				() => jobs.create("foo", {}, { run_at: "not-a-date" as any }),
-				{ name: "TypeError", message: /Invalid 'run_at'/ }
+				{ name: "TypeError", message: /Invalid 'run_at'/ },
 			);
 		},
 	},
@@ -531,19 +529,19 @@ testsRunner([
 			const created = await jobs.create(
 				"foo",
 				{},
-				{ backoff_strategy: "exp", max_attempts: 100 }
+				{ backoff_strategy: "exp", max_attempts: 100 },
 			);
 
 			await db.query(
 				`UPDATE ${tablePrefix}__job SET status = 'running',
 					attempts = 30, started_at = NOW()
 				 WHERE id = $1`,
-				[created.id]
+				[created.id],
 			);
 			const { rows: attemptRows } = await db.query(
 				`INSERT INTO ${tablePrefix}__job_attempt_log (job_id, attempt_number)
 				 VALUES ($1, 30) RETURNING id`,
-				[created.id]
+				[created.id],
 			);
 			const attemptId = attemptRows[0].id;
 
@@ -552,10 +550,10 @@ testsRunner([
 			);
 			const { rows: jobRows } = await db.query(
 				`SELECT * FROM ${tablePrefix}__job WHERE id = $1`,
-				[created.id]
+				[created.id],
 			);
 
-			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
+			// partial on purpose: _handleJobFailure only reads `db` and `tableNames`
 			const context = {
 				db,
 				tableNames: {
@@ -563,20 +561,19 @@ testsRunner([
 					tableAttempts: `${tablePrefix}__job_attempt_log`,
 				},
 				logger: silentLogger(),
-			} as any;
+			} as JobContext;
 
 			const failed = await _handleJobFailure(
 				context,
 				jobRows[0],
 				attemptId,
-				new Error("boom")
+				new Error("boom"),
 			);
 			assert.deepEqual(failed!.status, JOB_STATUS.PENDING);
-			const deltaMs =
-				new Date(failed!.run_at).valueOf() - Date.now();
+			const deltaMs = new Date(failed!.run_at).valueOf() - Date.now();
 			assert(
 				deltaMs <= 60 * 60 * 1000 + 5_000,
-				`backoff ${deltaMs}ms exceeds 1h cap`
+				`backoff ${deltaMs}ms exceeds 1h cap`,
 			);
 		},
 	},
@@ -617,7 +614,7 @@ testsRunner([
 						started_at = NOW() - INTERVAL '1 minute',
 						updated_at = NOW() - INTERVAL '1 minute', attempts = 1
 					 WHERE id = $1`,
-					[created.id]
+					[created.id],
 				);
 
 				await jobs.start(1);

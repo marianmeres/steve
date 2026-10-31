@@ -1,30 +1,29 @@
+import assert from "node:assert/strict";
 import type pg from "pg";
 import {
 	ATTEMPT_STATUS,
 	BACKOFF_STRATEGY,
 	JOB_STATUS,
-	type JobHandlersMap,
-	Jobs,
 	type Job,
 	type JobHandler,
+	type JobHandlersMap,
+	Jobs,
 } from "../src/index.ts";
+import { sleep } from "../src/steve/utils/sleep.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
-import assert from "node:assert/strict";
-import { sleep } from "../src/steve/utils/sleep.ts";
-
-let _logger: any = [];
+let _logger: unknown[] = [];
 const tablePrefix = "_foo_";
 const pollTimeoutMs = 100; // be faster in tests
 
 async function _createJobs(
 	db: pg.Client | pg.Pool,
 	jobHandler?: JobHandler,
-	jobHandlers?: JobHandlersMap
+	jobHandlers?: JobHandlersMap,
 ) {
 	_logger = [];
 
-	const log = (...args: any) => _logger.push(args[0]);
+	const log = (...args: unknown[]) => _logger.push(args[0]);
 
 	const jobs = new Jobs({
 		db,
@@ -47,7 +46,7 @@ testsRunner([
 	{
 		name: "happy flow",
 		async fn({ db }) {
-			const log: any[] = [];
+			const log: Job[] = [];
 			const jobs = await _createJobs(db, async (job: Job) => {
 				await sleep(20);
 				log.push(job);
@@ -109,12 +108,12 @@ testsRunner([
 			assert.deepEqual(attempts?.length, 1);
 			assert.deepEqual(attempts![0]!.status, ATTEMPT_STATUS.SUCCESS);
 			assert(
-				new Date(attempts![0]!.completed_at) > new Date(attempts![0]!.started_at)
+				new Date(attempts![0]!.completed_at) > new Date(attempts![0]!.started_at),
 			);
 
 			// as a sideeffect our job was logged during the handling (was in running status)...
 			assert.deepEqual(log.length, 1);
-			assert.deepEqual(log[0].status, JOB_STATUS.RUNNING);
+			assert.deepEqual(log[0]!.status, JOB_STATUS.RUNNING);
 
 			//
 			await jobs.stop();
@@ -149,7 +148,7 @@ testsRunner([
 			const { uid } = await jobs.create(
 				"foo",
 				{ bar: "baz" },
-				{ backoff_strategy: BACKOFF_STRATEGY.NONE }
+				{ backoff_strategy: BACKOFF_STRATEGY.NONE },
 			);
 
 			await jobs.start(1);
@@ -164,8 +163,8 @@ testsRunner([
 
 			// we must see 3 logged executions system messages
 			let _loggerExecCounter = 0;
-			_logger.forEach((msg: string) => {
-				if (/executing job 1/i.test(msg)) _loggerExecCounter++;
+			_logger.forEach((msg) => {
+				if (/executing job 1/i.test(String(msg))) _loggerExecCounter++;
 			});
 			assert.deepEqual(_loggerExecCounter, 3);
 
@@ -211,7 +210,7 @@ testsRunner([
 			const { uid } = await jobs.create(
 				"foo",
 				{ bar: "baz" },
-				{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 5 }
+				{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 5 },
 			);
 
 			await jobs.start(1);
@@ -247,7 +246,7 @@ testsRunner([
 				jobs.create(
 					"foo",
 					{ bar: "baz" },
-					{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 }
+					{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 },
 				);
 
 			let j = await createFoo();
@@ -310,7 +309,7 @@ testsRunner([
 					"foo",
 					{ doThrow },
 					{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 },
-					onDone
+					onDone,
 				);
 
 			// create throws
@@ -346,7 +345,9 @@ testsRunner([
 				{},
 				// schedule 200 ms in the future
 				{ run_at: new Date(Date.now() + 200) },
-				() => { jobDone = true; }
+				() => {
+					jobDone = true;
+				},
 			);
 			// console.log(job);
 
@@ -370,9 +371,8 @@ testsRunner([
 
 			// start and run time must differ for at least 200 ms
 			assert(
-				new Date(job.started_at).valueOf() -
-					new Date(job.created_at).valueOf() >
-					200
+				new Date(job.started_at).valueOf() - new Date(job.created_at).valueOf() >
+					200,
 			);
 
 			// teardown
@@ -396,7 +396,7 @@ testsRunner([
 					backoff_strategy: BACKOFF_STRATEGY.NONE,
 					max_attempts: 2,
 					max_attempt_duration_ms: 150,
-				}
+				},
 			);
 
 			await jobs.start(1);
@@ -423,19 +423,19 @@ testsRunner([
 	{
 		name: "onDoneFor, onAttemptFor",
 		async fn({ db }) {
-			const onDoneLog: any[] = [];
-			const onAttemptLog: any[] = [];
+			const onDoneLog: Job[] = [];
+			const onAttemptLog: Job[] = [];
 
 			const jobs = await _createJobs(db);
 
-			let job = await jobs.create("foo", { bar: "baz" });
+			const job = await jobs.create("foo", { bar: "baz" });
 
 			jobs.onDoneFor(job.uid, (j: Job) => onDoneLog.push(j));
 			jobs.onAttemptFor(job.uid, (j: Job) => onAttemptLog.push(j));
 
 			assert.deepEqual(
 				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
-				1
+				1,
 			);
 			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
 
@@ -448,7 +448,7 @@ testsRunner([
 
 			assert.deepEqual(
 				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
-				0
+				0,
 			);
 			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
 

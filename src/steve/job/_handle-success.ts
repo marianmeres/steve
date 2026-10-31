@@ -1,6 +1,6 @@
-import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
-import { _logAttemptSuccess } from "./_log-attempt.ts";
+import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 import { withTransaction } from "../utils/with-transaction.ts";
+import { _logAttemptSuccess } from "./_log-attempt.ts";
 
 /**
  * Will mark the job as completed and log success — atomically in one transaction.
@@ -14,7 +14,7 @@ export async function _handleJobSuccess(
 	context: JobContext,
 	job: Job,
 	attemptId: number,
-	result: unknown
+	result: unknown,
 ): Promise<Job | null> {
 	const { db, tableNames } = context;
 	const { tableJobs, tableAttempts } = tableNames;
@@ -40,7 +40,7 @@ export async function _handleJobSuccess(
 				AND status = '${JOB_STATUS.RUNNING}'
 				AND attempts = $3
 			RETURNING *`,
-			[serialized, job.id, job.attempts]
+			[serialized, job.id, job.attempts],
 		);
 
 		await _logAttemptSuccess(client, tableAttempts, attemptId);

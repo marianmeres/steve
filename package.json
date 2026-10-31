@@ -51,7 +51,7 @@
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
+    "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
     "test": "node --test --test-concurrency=1 --env-file-if-exists=.env \"tests/**/*.test.ts\"",
     "test:watch": "node --test --test-concurrency=1 --watch --env-file-if-exists=.env \"tests/**/*.test.ts\"",

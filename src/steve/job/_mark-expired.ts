@@ -1,4 +1,4 @@
-import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
+import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 
 /**
  * Mark jobs stuck in `running` longer than `maxAllowedRunDurationMinutes` as expired.
@@ -21,7 +21,7 @@ import { type Job, JOB_STATUS, type JobContext } from "../jobs.ts";
 export async function _markExpired(
 	context: JobContext,
 	maxAllowedRunDurationMinutes = 5,
-	tenantIds: string[] | null = null
+	tenantIds: string[] | null = null,
 ): Promise<Job[]> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
@@ -31,7 +31,7 @@ export async function _markExpired(
 
 	const params: unknown[] = [num];
 	let tenantPredicate = "";
-	if (tenantIds && tenantIds.length) {
+	if (tenantIds?.length) {
 		params.push(tenantIds);
 		tenantPredicate = `AND tenant_id = ANY($${params.length}::varchar[])`;
 	}
@@ -45,7 +45,7 @@ export async function _markExpired(
 			AND updated_at < NOW() - ($1::bigint || ' minutes')::interval
 			${tenantPredicate}
 		RETURNING *`,
-		params
+		params,
 	);
 
 	return rows as Job[];

@@ -1,6 +1,6 @@
+import process from "node:process";
 import { createClog, type Logger } from "@marianmeres/clog";
 import { createPubSub, type Subscriber, type Unsubscriber } from "@marianmeres/pubsub";
-import process from "node:process";
 import type pg from "pg";
 import { _claimNextJob } from "./job/_claim-next.ts";
 import { _create } from "./job/_create.ts";
@@ -11,21 +11,16 @@ import { _healthPreview } from "./job/_health-preview.ts";
 import { _logAttemptFetchAll } from "./job/_log-attempt.ts";
 import { _markExpired } from "./job/_mark-expired.ts";
 import { _purge } from "./job/_purge.ts";
-import {
-	_initialize,
-	_schemaCreate,
-	_schemaDrop,
-	_uninstall,
-} from "./job/_schema.ts";
-import { pgQuoteValue } from "./utils/pg-quote.ts";
-import { sleep } from "./utils/sleep.ts";
-import { withDbRetry, type DbRetryOptions } from "./utils/with-db-retry.ts";
-import { isPool } from "./utils/with-transaction.ts";
+import { _initialize, _schemaCreate, _schemaDrop, _uninstall } from "./job/_schema.ts";
 import {
 	checkDbHealth,
 	DbHealthMonitor,
 	type DbHealthStatus,
 } from "./utils/db-health.ts";
+import { pgQuoteValue } from "./utils/pg-quote.ts";
+import { sleep } from "./utils/sleep.ts";
+import { type DbRetryOptions, withDbRetry } from "./utils/with-db-retry.ts";
+import { isPool } from "./utils/with-transaction.ts";
 
 /**
  * Available job statuses.
@@ -78,10 +73,7 @@ export const BACKOFF_STRATEGY = {
  *                handlers that ignore it will continue to run in the background even
  *                after the attempt is recorded as timed-out.
  */
-export type JobHandler = (
-	job: Job,
-	signal?: AbortSignal
-) => unknown | Promise<unknown>;
+export type JobHandler = (job: Job, signal?: AbortSignal) => unknown | Promise<unknown>;
 
 /**
  * Map of job handlers keyed by job type.
@@ -325,13 +317,9 @@ function tableNames(tablePrefix: string = ""): JobContext["tableNames"] {
  * empties-dropped `string[]`, or `null` when there is nothing to filter by.
  * @internal
  */
-function normalizeTenantIds(
-	v: string | string[] | null | undefined
-): string[] | null {
+function normalizeTenantIds(v: string | string[] | null | undefined): string[] | null {
 	if (v == null) return null;
-	const ids = [
-		...new Set((Array.isArray(v) ? v : [v]).filter(Boolean)),
-	] as string[];
+	const ids = [...new Set((Array.isArray(v) ? v : [v]).filter(Boolean))] as string[];
 	return ids.length ? ids : null;
 }
 
@@ -437,8 +425,8 @@ export class Jobs {
 		this.#jobHandler = jobHandler;
 		this.#jobHandlers = new Map(
 			Object.entries(jobHandlers ?? {}).filter(
-				(e): e is [string, JobHandler] => typeof e[1] === "function"
-			)
+				(e): e is [string, JobHandler] => typeof e[1] === "function",
+			),
 		);
 		this.#logger = logger;
 		this.pollTimeoutMs = pollTimeoutMs;
@@ -465,8 +453,7 @@ export class Jobs {
 
 		// Setup auto-cleanup options
 		if (autoCleanup) {
-			this.#autoCleanupOptions =
-				autoCleanup === true ? {} : { ...autoCleanup };
+			this.#autoCleanupOptions = autoCleanup === true ? {} : { ...autoCleanup };
 		}
 
 		this.#context = {
@@ -565,7 +552,9 @@ export class Jobs {
 							this.#context,
 							job,
 							// try handler by type, fallback to global, fallback to noop
-							this.#jobHandlers.get(job.type) ?? this.#jobHandler ?? noopHandler
+							this.#jobHandlers.get(job.type) ??
+								this.#jobHandler ??
+								noopHandler,
 						);
 					} finally {
 						this.#activeJobs.delete(job.id);
@@ -584,7 +573,7 @@ export class Jobs {
 				// a little dance to prevent log spam... only allow `limit` consecutive error reports
 				this.#jobClaimErrorCounter++;
 				if (this.#jobClaimErrorCounter < limit) {
-					const msg = e instanceof Error ? e.stack ?? e.message : String(e);
+					const msg = e instanceof Error ? (e.stack ?? e.message) : String(e);
 					this.#logger?.error?.(`Job claim: ${msg}`);
 				} else if (this.#jobClaimErrorCounter === limit) {
 					this.#logger?.debug?.(`Job claim error reporting MUTED...`);
@@ -599,7 +588,7 @@ export class Jobs {
 
 		if (this.#activeJobs.size > 0) {
 			this.#logger?.debug?.(
-				`Waiting for ${this.#activeJobs.size} jobs to complete...`
+				`Waiting for ${this.#activeJobs.size} jobs to complete...`,
 			);
 			while (this.#activeJobs.size > 0) {
 				await sleep(100);
@@ -618,7 +607,7 @@ export class Jobs {
 		this.#autoCleanupTimeoutId = setTimeout(() => {
 			this.#autoCleanupTimeoutId = null;
 			const tick = this.cleanup(
-				this.#autoCleanupOptions?.maxAllowedRunDurationMinutes
+				this.#autoCleanupOptions?.maxAllowedRunDurationMinutes,
 			)
 				.then(() => {})
 				.catch((e) => this.#logger?.error?.(`Auto cleanup failed: ${e}`))
@@ -719,9 +708,7 @@ export class Jobs {
 			throw new Error(msg);
 		}
 		if (this.#isRunning) {
-			this.#logger?.warn?.(
-				`Jobs.start() called while already running — ignored.`
-			);
+			this.#logger?.warn?.(`Jobs.start() called while already running — ignored.`);
 			return;
 		}
 		if (!isPool(this.#db) && processorsCount > 1) {
@@ -750,7 +737,7 @@ export class Jobs {
 			this.#jobProcessors.push(processor);
 		}
 		this.#logger?.debug?.(
-			`Job processors initialized (count: ${processorsCount})...`
+			`Job processors initialized (count: ${processorsCount})...`,
 		);
 
 		if (this.#autoCleanupOptions) {
@@ -818,7 +805,7 @@ export class Jobs {
 		type: string,
 		payload: Record<string, unknown> = {},
 		options?: JobCreateOptions,
-		onDone?: JobAwareFn
+		onDone?: JobAwareFn,
 	): Promise<Job> {
 		const {
 			max_attempts = 3,
@@ -843,8 +830,8 @@ export class Jobs {
 					// undefined when not supplied => column omitted from INSERT (DB NULL)
 					tenant_id,
 				},
-				onDone
-			)
+				onDone,
+			),
 		);
 	}
 
@@ -872,17 +859,17 @@ export class Jobs {
 	async find(
 		uid: string,
 		withAttempts: boolean = false,
-		options: { tenant_id?: string | null } = {}
+		options: { tenant_id?: string | null } = {},
 	): Promise<{ job: Job | undefined; attempts: null | JobAttempt[] }> {
 		await this.#initializeOnce();
 		const job = await this.#withRetry(() =>
-			_find(this.#context, uid, options?.tenant_id ?? null)
+			_find(this.#context, uid, options?.tenant_id ?? null),
 		);
 		let attempts: null | JobAttempt[] = null;
 
 		if (job && withAttempts) {
 			attempts = await this.#withRetry(() =>
-				_logAttemptFetchAll(this.#context, job.id)
+				_logAttemptFetchAll(this.#context, job.id),
 			);
 		}
 
@@ -921,7 +908,7 @@ export class Jobs {
 			asc: number | string | boolean;
 			sinceMinutesAgo: number;
 			tenant_id: string | string[] | null;
-		}> = {}
+		}> = {},
 	): Promise<Job[]> {
 		await this.#initializeOnce();
 
@@ -939,16 +926,12 @@ export class Jobs {
 
 		const tenantIds = normalizeTenantIds(options?.tenant_id);
 		if (tenantIds) {
-			conditions.push(
-				`tenant_id IN (${tenantIds.map(pgQuoteValue).join(",")})`
-			);
+			conditions.push(`tenant_id IN (${tenantIds.map(pgQuoteValue).join(",")})`);
 		}
 
 		const where = conditions.length ? conditions.join(" AND ") : null;
 
-		return await this.#withRetry(() =>
-			_fetchAll(this.#context, where, options)
-		);
+		return await this.#withRetry(() => _fetchAll(this.#context, where, options));
 	}
 
 	/**
@@ -969,7 +952,7 @@ export class Jobs {
 	 */
 	async cleanup(
 		maxAllowedRunDurationMinutes: number = 5,
-		options: { tenant_id?: string | string[] | null } = {}
+		options: { tenant_id?: string | string[] | null } = {},
 	): Promise<number> {
 		await this.#initializeOnce();
 
@@ -977,8 +960,8 @@ export class Jobs {
 			_markExpired(
 				this.#context,
 				maxAllowedRunDurationMinutes,
-				normalizeTenantIds(options?.tenant_id)
-			)
+				normalizeTenantIds(options?.tenant_id),
+			),
 		);
 
 		// Publish onDone events for every reaped job so consumers (event listeners and
@@ -1014,7 +997,7 @@ export class Jobs {
 		options: {
 			statuses?: Job["status"][];
 			tenant_id?: string | string[] | null;
-		} = {}
+		} = {},
 	): Promise<number> {
 		await this.#initializeOnce();
 		const statuses = options?.statuses ?? [
@@ -1027,8 +1010,8 @@ export class Jobs {
 				this.#context,
 				olderThanMinutes,
 				statuses,
-				normalizeTenantIds(options?.tenant_id)
-			)
+				normalizeTenantIds(options?.tenant_id),
+			),
 		);
 	}
 
@@ -1050,15 +1033,15 @@ export class Jobs {
 	 */
 	async healthPreview(
 		sinceMinutesAgo: number = 60,
-		options: { tenant_id?: string | string[] | null } = {}
+		options: { tenant_id?: string | string[] | null } = {},
 	): Promise<HealthPreviewRow[]> {
 		await this.#initializeOnce();
 		return await this.#withRetry(() =>
 			_healthPreview(
 				this.#context,
 				sinceMinutesAgo,
-				normalizeTenantIds(options?.tenant_id)
-			)
+				normalizeTenantIds(options?.tenant_id),
+			),
 		);
 	}
 
@@ -1152,7 +1135,7 @@ export class Jobs {
 	onDone(
 		type: string | string[],
 		cb: (job: Job) => void,
-		skipIfExists: boolean = true
+		skipIfExists: boolean = true,
 	): Unsubscriber {
 		return this.#onEvent(this.#pubsubDone, type, cb, skipIfExists);
 	}
@@ -1180,7 +1163,7 @@ export class Jobs {
 	onAttempt(
 		type: string | string[],
 		cb: (job: Job) => void,
-		skipIfExists: boolean = true
+		skipIfExists: boolean = true,
 	): Unsubscriber {
 		return this.#onEvent(this.#pubsubAttempt, type, cb, skipIfExists);
 	}
@@ -1190,7 +1173,7 @@ export class Jobs {
 		pubsub: ReturnType<typeof createPubSub>,
 		type: string | string[],
 		cb: JobAwareFn,
-		skipIfExists: boolean
+		skipIfExists: boolean,
 	): Unsubscriber {
 		const types = Array.isArray(type) ? type : [type];
 		const unsubs: (() => void)[] = [];
@@ -1221,7 +1204,7 @@ export class Jobs {
 				unsub();
 				// Only remove the wrap if this subscription was the sole user of it for this type.
 				const tMap = this.#onEventWraps.get(t);
-				if (tMap && !pubsub.isSubscribed(t, wrapped!)) {
+				if (tMap && !pubsub.isSubscribed(t, wrapped)) {
 					tMap.delete(cb);
 					if (tMap.size === 0) this.#onEventWraps.delete(t);
 				}
@@ -1232,7 +1215,8 @@ export class Jobs {
 			for (const u of unsubs) u();
 		};
 		const composite = unsubAll as Unsubscriber;
-		(composite as unknown as { [Symbol.dispose]: () => void })[Symbol.dispose] = unsubAll;
+		(composite as unknown as { [Symbol.dispose]: () => void })[Symbol.dispose] =
+			unsubAll;
 		return composite;
 	}
 
@@ -1285,9 +1269,7 @@ export class Jobs {
 			pubsubAttempt: this.#pubsubAttempt.__dump(),
 			pubsubDone: this.#pubsubDone.__dump(),
 			onDoneCallbacks: Object.fromEntries(this.#onDoneCallbacks.entries()),
-			onAttemptCallbacks: Object.fromEntries(
-				this.#onAttemptCallbacks.entries()
-			),
+			onAttemptCallbacks: Object.fromEntries(this.#onAttemptCallbacks.entries()),
 			processorsCount: this.#jobProcessors.length,
 			isRunning: this.#isRunning,
 		};

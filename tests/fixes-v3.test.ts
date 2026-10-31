@@ -3,14 +3,15 @@
  * finalization, per-uid callback isolation, handler dispatch, pg.Client restriction,
  * init races and locking, purge, find() not-found, unsubscribeAll, SIGTERM lifecycle.
  */
-import type pg from "pg";
-import { JOB_STATUS, Jobs, type Job, type JobHandler } from "../src/index.ts";
-import { testsRunner } from "./_tests-runner.ts";
-import { createPgClient } from "./_pg.ts";
+
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import type pg from "pg";
+import { JOB_STATUS, type Job, type JobHandler, Jobs } from "../src/index.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
+import { createPgClient } from "./_pg.ts";
+import { testsRunner } from "./_tests-runner.ts";
 
 const tablePrefix = "_fixes_v3_";
 const pollTimeoutMs = 50;
@@ -49,7 +50,7 @@ async function _createJobs(db: pg.Client | pg.Pool, opts: CreateJobsOptions = {}
 /** Await a condition with a polling budget; a single timer at a time, cleared on exit. */
 async function waitFor(
 	predicate: () => boolean | Promise<boolean>,
-	{ timeoutMs = 2000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {}
+	{ timeoutMs = 2000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {},
 ): Promise<boolean> {
 	const ref = { id: -1 };
 	const deadline = Date.now() + timeoutMs;
@@ -82,16 +83,20 @@ testsRunner([
 				`UPDATE ${tablePrefix}__job SET status = 'running', attempts = 2,
 					started_at = NOW() - INTERVAL '10 minutes', updated_at = NOW()
 				 WHERE id = $1`,
-				[created.id]
+				[created.id],
 			);
-			assert.deepEqual(await jobs.cleanup(5), 0, "a fresh attempt must NOT be reaped");
+			assert.deepEqual(
+				await jobs.cleanup(5),
+				0,
+				"a fresh attempt must NOT be reaped",
+			);
 			assert.deepEqual(await statusOf(jobs, created.uid), JOB_STATUS.RUNNING);
 
 			// ...and once the CURRENT attempt is genuinely stale, it is reaped.
 			await db.query(
 				`UPDATE ${tablePrefix}__job SET updated_at = NOW() - INTERVAL '10 minutes'
 				 WHERE id = $1`,
-				[created.id]
+				[created.id],
 			);
 			assert.deepEqual(await jobs.cleanup(5), 1);
 			assert.deepEqual(await statusOf(jobs, created.uid), JOB_STATUS.EXPIRED);
@@ -120,7 +125,10 @@ testsRunner([
 			try {
 				const created = await jobs.create("x", {}, { max_attempts: 1 });
 				await jobs.start(1);
-				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.RUNNING);
+				await waitFor(
+					async () =>
+						(await statusOf(jobs, created.uid)) === JOB_STATUS.RUNNING,
+				);
 
 				// reap it while the handler is still running (threshold 0 => claimed before now)
 				assert.deepEqual(await jobs.cleanup(0), 1);
@@ -134,13 +142,25 @@ testsRunner([
 				});
 
 				const { job, attempts } = await jobs.find(created.uid, true);
-				assert.deepEqual(job!.status, JOB_STATUS.EXPIRED, "expired must stay expired");
-				assert.deepEqual(job!.result, {}, "late result must not be stored on the row");
-				assert.deepEqual(attempts![0]!.status, "success", "attempt log stays truthful");
+				assert.deepEqual(
+					job!.status,
+					JOB_STATUS.EXPIRED,
+					"expired must stay expired",
+				);
+				assert.deepEqual(
+					job!.result,
+					{},
+					"late result must not be stored on the row",
+				);
+				assert.deepEqual(
+					attempts![0]!.status,
+					"success",
+					"attempt log stays truthful",
+				);
 				assert.deepEqual(done.length, 1, "onDone must fire exactly once");
 				assert(
 					lines.some((l) => /already finalized elsewhere/.test(l)),
-					"the late finalization must be logged"
+					"the late finalization must be logged",
 				);
 			} finally {
 				await jobs.stop();
@@ -173,10 +193,13 @@ testsRunner([
 					{ backoff_strategy: "none", max_attempts: 3 },
 					() => {
 						throw new Error("consumer bug");
-					}
+					},
 				);
 				await jobs.start(1);
-				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED);
+				await waitFor(
+					async () =>
+						(await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED,
+				);
 				// give a (wrong) retry every chance to happen
 				await sleep(300, ref);
 
@@ -185,7 +208,11 @@ testsRunner([
 				assert.deepEqual(executions, 1, "handler must run exactly once");
 				assert.deepEqual(attempts!.length, 1);
 				assert.deepEqual(attempts![0]!.status, "success");
-				assert(lines.some((l) => /onDone callback/.test(l) && /consumer bug/.test(l)));
+				assert(
+					lines.some(
+						(l) => /onDone callback/.test(l) && /consumer bug/.test(l),
+					),
+				);
 			} finally {
 				await jobs.stop();
 				jobs.unsubscribeAll();
@@ -203,18 +230,28 @@ testsRunner([
 			process.on("unhandledRejection", onUnhandled);
 			const ref = { id: -1 };
 			const { lines, logger } = captureLogger();
-			const jobs = await _createJobs(db, { logger, jobHandler: () => ({ ok: true }) });
+			const jobs = await _createJobs(db, {
+				logger,
+				jobHandler: () => ({ ok: true }),
+			});
 
 			try {
 				const created = await jobs.create("x", {}, { max_attempts: 1 }, () =>
-					Promise.reject(new Error("async consumer bug"))
+					Promise.reject(new Error("async consumer bug")),
 				);
 				await jobs.start(1);
-				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED);
+				await waitFor(
+					async () =>
+						(await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED,
+				);
 				await sleep(100, ref);
 
 				assert.deepEqual(unhandled, 0);
-				assert(lines.some((l) => /onDone callback/.test(l) && /async consumer bug/.test(l)));
+				assert(
+					lines.some(
+						(l) => /onDone callback/.test(l) && /async consumer bug/.test(l),
+					),
+				);
 			} finally {
 				await jobs.stop();
 				jobs.unsubscribeAll();
@@ -239,7 +276,10 @@ testsRunner([
 					throw new Error("attempt cb bug");
 				});
 				await jobs.start(1);
-				await waitFor(async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED);
+				await waitFor(
+					async () =>
+						(await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED,
+				);
 				const { job, attempts } = await jobs.find(created.uid, true);
 				assert.deepEqual(job!.status, JOB_STATUS.COMPLETED);
 				assert.deepEqual(executions, 1);
@@ -259,7 +299,12 @@ testsRunner([
 			const jobs = await _createJobs(db, { jobHandler: () => ({ global: true }) });
 			try {
 				await jobs.start(1);
-				for (const type of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+				for (const type of [
+					"constructor",
+					"toString",
+					"hasOwnProperty",
+					"__proto__",
+				]) {
 					const j = await jobs.create(type, {}, { max_attempts: 1 });
 					await waitFor(async () => {
 						const s = await statusOf(jobs, j.uid);
@@ -298,11 +343,15 @@ testsRunner([
 			});
 			try {
 				await jobs.resetHard();
-				await assert.rejects(() => jobs.start(2), { message: /single processor/ });
+				await assert.rejects(() => jobs.start(2), {
+					message: /single processor/,
+				});
 
 				await jobs.start(1);
 				const j = await jobs.create("x", {}, { max_attempts: 1 });
-				await waitFor(async () => (await statusOf(jobs, j.uid)) === JOB_STATUS.COMPLETED);
+				await waitFor(
+					async () => (await statusOf(jobs, j.uid)) === JOB_STATUS.COMPLETED,
+				);
 				assert.deepEqual(await statusOf(jobs, j.uid), JOB_STATUS.COMPLETED);
 				await jobs.stop();
 				await jobs.uninstall();
@@ -361,14 +410,17 @@ testsRunner([
 				});
 				const ref = { id: -1 };
 				const init = fresh.fetchAll().then(() => "ok");
-				const outcome = await Promise.race([init, sleep(2500, ref).then(() => "blocked")]);
+				const outcome = await Promise.race([
+					init,
+					sleep(2500, ref).then(() => "blocked"),
+				]);
 				clearTimeout(ref.id);
 				await reader.query("ROLLBACK");
 				await init; // settle either way
 				assert.deepEqual(
 					outcome,
 					"ok",
-					"schema init must not take an ACCESS EXCLUSIVE lock when nothing needs to change"
+					"schema init must not take an ACCESS EXCLUSIVE lock when nothing needs to change",
 				);
 			} finally {
 				reader.release();
@@ -399,7 +451,7 @@ testsRunner([
 			await db.query(
 				`UPDATE ${tablePrefix}__job SET completed_at = NOW() - INTERVAL '10 days'
 				 WHERE id IN ($1, $2)`,
-				[a.id, b.id]
+				[a.id, b.id],
 			);
 
 			assert.deepEqual(await jobs.purge(7 * 24 * 60), 2);
@@ -408,7 +460,7 @@ testsRunner([
 			assert.deepEqual(await statusOf(jobs, c.uid), JOB_STATUS.COMPLETED);
 
 			const { rows } = await db.query(
-				`SELECT count(*)::int AS n FROM ${tablePrefix}__job_attempt_log`
+				`SELECT count(*)::int AS n FROM ${tablePrefix}__job_attempt_log`,
 			);
 			assert.deepEqual(rows[0].n, 1, "attempt logs must cascade");
 
@@ -419,12 +471,12 @@ testsRunner([
 			await assert.rejects(
 				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				() => jobs.purge(0, { statuses: ["pending"] as any }),
-				TypeError
+				TypeError,
 			);
 			await assert.rejects(
 				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
 				() => jobs.purge(0, { statuses: ["completed", "running"] as any }),
-				TypeError
+				TypeError,
 			);
 		},
 	},
@@ -438,7 +490,10 @@ testsRunner([
 			const r = await jobs.find("not-a-uuid", true);
 			assert.deepEqual(r.job, undefined);
 			assert.deepEqual(r.attempts, null);
-			assert.deepEqual((await jobs.find("", false, { tenant_id: "acme" })).job, undefined);
+			assert.deepEqual(
+				(await jobs.find("", false, { tenant_id: "acme" })).job,
+				undefined,
+			);
 		},
 	},
 
@@ -452,10 +507,16 @@ testsRunner([
 			jobs.onDoneFor(j.uid, () => {});
 			jobs.onAttemptFor(j.uid, () => {});
 			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 1);
-			assert.deepEqual(Object.keys(jobs.__debugDump().onAttemptCallbacks).length, 1);
+			assert.deepEqual(
+				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
+				1,
+			);
 			jobs.unsubscribeAll();
 			assert.deepEqual(Object.keys(jobs.__debugDump().onDoneCallbacks).length, 0);
-			assert.deepEqual(Object.keys(jobs.__debugDump().onAttemptCallbacks).length, 0);
+			assert.deepEqual(
+				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
+				0,
+			);
 		},
 	},
 
@@ -481,7 +542,8 @@ testsRunner([
 			child.stderr.resume();
 			// "close" == the child is gone AND its stdout is drained
 			const exited = new Promise<{ code: number | null; signal: string | null }>(
-				(resolve) => child.once("close", (code, signal) => resolve({ code, signal }))
+				(resolve) =>
+					child.once("close", (code, signal) => resolve({ code, signal })),
 			);
 
 			try {
@@ -504,10 +566,16 @@ testsRunner([
 				assert(status.code !== 0);
 				assert(
 					status.signal === "SIGTERM" || status.code === 143,
-					`expected SIGTERM termination, got ${JSON.stringify(status)}`
+					`expected SIGTERM termination, got ${JSON.stringify(status)}`,
 				);
-				assert(/Job processor .* stopped/.test(out), `must stop gracefully first:\n${out}`);
-				assert(/Re-raising SIGTERM/.test(out), `must re-raise after stop():\n${out}`);
+				assert(
+					/Job processor .* stopped/.test(out),
+					`must stop gracefully first:\n${out}`,
+				);
+				assert(
+					/Re-raising SIGTERM/.test(out),
+					`must re-raise after stop():\n${out}`,
+				);
 			} finally {
 				if (child.exitCode === null && child.signalCode === null) {
 					child.kill("SIGKILL");

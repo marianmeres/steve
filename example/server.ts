@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { demino } from "@marianmeres/demino";
 import { serve } from "@marianmeres/demino/node";
 import pg from "pg";
-import { Jobs, type Job } from "../src/index.ts";
+import { type Job, Jobs } from "../src/index.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 
 const { PG_HOST, PG_DATABASE, PG_USER, PG_PASSWORD, PG_PORT } = {
@@ -19,7 +19,7 @@ const db = new pg.Pool({
 	user: PG_USER,
 	database: PG_DATABASE,
 	password: PG_PASSWORD,
-	port: parseInt(PG_PORT),
+	port: parseInt(PG_PORT, 10),
 });
 
 const INDEX_HTML = join(import.meta.dirname, "index.html");
@@ -64,13 +64,9 @@ async function main() {
 		return (c.locals.jobs as Jobs).fetchAll(null, q);
 	});
 
-	app.get("/job/[uid]", (_r, _i, c) =>
-		(c.locals.jobs as Jobs).find(c.params.uid!)
-	);
+	app.get("/job/[uid]", (_r, _i, c) => (c.locals.jobs as Jobs).find(c.params.uid!));
 
-	app.get("/health", (_r, _i, c) =>
-		(c.locals.jobs as Jobs).healthPreview(15)
-	);
+	app.get("/health", (_r, _i, c) => (c.locals.jobs as Jobs).healthPreview(15));
 
 	await serve(app);
 }
@@ -81,7 +77,7 @@ if (import.meta.main) {
 
 // prettier-ignore
 function getRandomIntInclusive(min: number, max: number): number {
-    const minCeiled = Math.ceil(min);
-    const maxFloored = Math.floor(max);
-    return Math.floor(Math.random() * (maxFloored - minCeiled + 1) + minCeiled);
+	const minCeiled = Math.ceil(min);
+	const maxFloored = Math.floor(max);
+	return Math.floor(Math.random() * (maxFloored - minCeiled + 1) + minCeiled);
 }

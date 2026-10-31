@@ -450,11 +450,11 @@ Removes all event listeners: the type-keyed `onDone` / `onAttempt` subscriptions
 
 ### Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `pollTimeoutMs` | `number` | Polling interval in ms (readonly) |
+| Property          | Type      | Description                                    |
+| ----------------- | --------- | ---------------------------------------------- |
+| `pollTimeoutMs`   | `number`  | Polling interval in ms (readonly)              |
 | `gracefulSigterm` | `boolean` | Whether SIGTERM handling is enabled (readonly) |
-| `tablePrefix` | `string` | Table name prefix (readonly) |
+| `tablePrefix`     | `string`  | Table name prefix (readonly)                   |
 
 ---
 

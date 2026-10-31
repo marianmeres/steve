@@ -12,7 +12,7 @@ export class TimeoutError extends Error {}
 export function withTimeout<T>(
 	fn: (signal: AbortSignal) => T | Promise<T>,
 	timeout: number = 1_000,
-	errMessage?: string
+	errMessage?: string,
 ): () => Promise<T> {
 	return () => {
 		const ac = new AbortController();
@@ -25,7 +25,9 @@ export function withTimeout<T>(
 			}, timeout);
 		});
 
-		return Promise.race([Promise.resolve().then(() => fn(ac.signal)), _clock])
-			.finally(() => clearTimeout(_timeoutId));
+		return Promise.race([
+			Promise.resolve().then(() => fn(ac.signal)),
+			_clock,
+		]).finally(() => clearTimeout(_timeoutId));
 	};
 }
