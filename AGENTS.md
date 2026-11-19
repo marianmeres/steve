@@ -15,7 +15,7 @@
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
 - **Runtime**: Node.js
-- **Version**: 3.1.0
+- **Version**: 4.0.0 (`package.json` is bumped by the release tool, never by hand)
 - **License**: MIT
 
 ## Purpose
@@ -24,7 +24,7 @@ Steve is a PostgreSQL-based job processing manager that provides:
 - Distributed job queue with multiple concurrent workers (`FOR UPDATE SKIP LOCKED`)
 - Automatic retry with configurable exponential backoff (capped at 1 hour)
 - Job scheduling (delayed execution via `run_at`)
-- Database resilience with connection-retry logic and real, single-connection transactions
+- Database resilience: retry of transient failures (classified by sqlkit) and real, single-connection transactions
 - Health monitoring with state-change callbacks
 - Automatic or manual cleanup of crashed-worker-leftovers (`expired` jobs)
 - AbortSignal-based cooperative timeouts
@@ -88,7 +88,7 @@ From `src/index.ts`:
 ### Functions
 
 - `withDbRetry<T>(fn, options?)` - Wraps async function with retry logic: retries what sqlkit's `classifyPg` calls retryable (a lost or refused connection: Node's socket codes, class `08`, `57P01`–`57P03`, `53300`, the pool's connect timeout; a deadlock, a serialization failure, `55P03`); a caller's `retryableErrors` replaces that with exactly its list (the code, or the code in the message). An option of the wrong type or range is a `TypeError`
-- `checkDbHealth(db, logger?, { timeoutMs? })` - One-time database health check on sqlkit's `checkHealth`: a `select 1` raced against `timeoutMs` (5 s; unhealthy, with `latencyMs: null`, when it does not answer), then `pgVersion`, asked once per driver after a healthy check. `error` is the driver's message or the timeout's
+- `checkDbHealth(db, logger?, { timeoutMs? })` - One-time database health check on sqlkit's `checkHealth`: a `select 1` raced against `timeoutMs` (5 s; unhealthy, with `latencyMs: null`, when it does not answer), then `pgVersion`, asked once per driver after a healthy check. `error` is the driver's message or the timeout's. The method `jobs.checkDbHealth()` passes no options: it always uses the 5 s default, not `dbHealthCheck.timeoutMs`
 
 ### Interfaces
 
@@ -96,7 +96,7 @@ From `src/index.ts`:
 - `JobAttempt` - Attempt log entry
 - `JobCreateOptions` - Options for creating jobs
 - `JobCreateDTO` - DTO extending JobCreateOptions with type and payload
-- `JobsOptions` - Jobs constructor options (`autoCleanup?` added)
+- `JobsOptions` - Jobs constructor options (`db: SteveDb`; `dbHealthCheck.timeoutMs`; `autoCleanup`)
 - `AutoCleanupOptions` - Reaper configuration
 - `JobContext` - Internal context (exported but internal use; exposes `withRetry`; `db` is a sqlkit `Driver`)
 - `HealthPreviewRow` - Row returned by health preview query
@@ -194,6 +194,13 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 - **Never send `begin` / `commit` yourself** — on a pool each statement can take a different connection
 - A failed statement rejects with a sqlkit `SqlError` (node-postgres's `code` and `message`, the original error as `cause`), not a raw `pg` error
 - Rows come back as `Record<string, unknown>`: type the call (`db.query<Job>(…)`) where a row is read
+- A host-shared `Driver` (documented for users in README "The `db` option"):
+  - steve never closes what it is given (pool, client or driver)
+  - it carries the host's transactions: a `jobs.create()` inside the host's `db.transaction()` is part of it (a pool or client gets steve's OWN driver, so this never happens there; sqlkit keeps the transaction context per driver)
+  - the schema check runs once per instance, on first use, through `transaction()`, which joins an open one: inside a host transaction that rolls back on a fresh database it is rolled back too and not re-run. Hence "first steve call outside any transaction" (`start()` does it)
+  - `dbRetry` cannot help inside the host's transaction: Postgres has aborted it after a failure
+  - two drivers over ONE client do not wait for each other's transactions: the host passes its driver, not the client under it
+  - rows are the driver's: tested on node-postgres only; on PGlite `healthPreview()`'s `count` is a number, not a string (`HealthPreviewRow` says `string`)
 
 ### Retry Logic
 
@@ -379,15 +386,16 @@ const jobs = new Jobs({
 
 ## File Locations
 
-| Purpose             | Path                                                                                                                                                 |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main entry          | `src/index.ts`                                                                                                                                       |
-| Jobs class          | `src/steve/jobs.ts`                                                                                                                                  |
-| Retry utility       | `src/steve/utils/with-db-retry.ts`                                                                                                                   |
-| Driver seam         | `src/steve/utils/driver.ts`                                                                                                                          |
-| Health utility      | `src/steve/utils/db-health.ts`                                                                                                                       |
-| Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                                                    |
-| Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/driver.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
-| Example server      | `example/server.ts`                                                                                                                                  |
-| Config              | `package.json`, `tsconfig.json`, `biome.json`                                                                                                        |
-| CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                                             |
+| Purpose             | Path                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main entry          | `src/index.ts`                                                                                                                                          |
+| Jobs class          | `src/steve/jobs.ts`                                                                                                                                     |
+| Retry utility       | `src/steve/utils/with-db-retry.ts`                                                                                                                      |
+| Driver seam         | `src/steve/utils/driver.ts`                                                                                                                             |
+| Health utility      | `src/steve/utils/db-health.ts`                                                                                                                          |
+| Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                                                       |
+| Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/driver.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts`    |
+| Example server      | `example/server.ts`                                                                                                                                     |
+| Config              | `package.json`, `tsconfig.json`, `biome.json`                                                                                                           |
+| CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                                                |
+| Human docs          | `README.md` (usage, "The `db` option", per-major upgrade notes incl. "Upgrading to 4.0"), `API.md` (full reference, "Errors"), `USAGE_DB_RESILIENCE.md` |

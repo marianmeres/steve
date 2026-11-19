@@ -11,7 +11,9 @@ per attempt (with cooperative `AbortSignal`), database resilience with automatic
 real single-connection transactions, health monitoring, automatic cleanup of crashed-worker
 leftovers, detailed logging and more...
 
-Uses [node-postgres](https://node-postgres.com/) internally.
+Runs on PostgreSQL through [@marianmeres/sqlkit](https://www.npmjs.com/package/@marianmeres/sqlkit):
+pass it a [node-postgres](https://node-postgres.com/) pool or client, or a sqlkit `Driver`
+(see [The `db` option](#the-db-option)).
 
 ## Installation
 
@@ -21,6 +23,9 @@ npm i @marianmeres/steve   # or pnpm add
 
 The package targets Node >= 24.12 and is published to npm only. 3.1.2 is the last version
 on JSR, where it stays installable.
+
+Steve does not depend on `pg`: install the version you build your pool or client with
+(`npm i pg`).
 
 ## Basic Usage
 
@@ -41,8 +46,7 @@ import { Jobs } from "@marianmeres/steve";
 
 // the manager instance
 const jobs = new Jobs({
-    // pg.Pool (recommended), or pg.Client: on a single connection every
-    // statement takes its turn, so handlers overlap but database work does not
+    // pg.Pool (recommended), pg.Client, or a sqlkit Driver (see "The `db` option")
     db,
     // global job handler for all jobs
     jobHandler: (job: Job, signal?: AbortSignal) => {
@@ -81,6 +85,44 @@ await jobs.start(2);
 // the health monitor/auto-cleanup and removes the SIGTERM listener)
 await jobs.stop();
 ```
+
+## The `db` option
+
+`db` takes one of three things:
+
+- a node-postgres `pg.Pool`, the recommendation;
+- a connected `pg.Client`: on a single connection every statement takes its turn, so
+  handlers overlap but database work does not;
+- a [sqlkit](https://www.npmjs.com/package/@marianmeres/sqlkit) `Driver` of the `pg`
+  dialect. A driver of another dialect is a `TypeError` at construction, and so is
+  anything that is neither of the three.
+
+```typescript
+import pg from "pg";
+import { createPgDriver } from "@marianmeres/sqlkit/pg";
+
+const db = createPgDriver(new pg.Pool({ connectionString: process.env.DATABASE_URL }));
+const jobs = new Jobs({ db });
+```
+
+Steve never closes what it is given: ending the pool, the client or the driver is yours.
+
+Given a pool or a client, steve builds its own driver over it, so its statements are never
+part of your transactions. A driver you share with steve is different:
+
+- **It carries your transactions.** A `jobs.create()` called inside your
+  `db.transaction()` is part of it: the job exists only if you commit.
+- **Make the first steve call of a process outside any transaction** (`start()` does it).
+  The schema check runs once per instance, on first use. Inside a transaction that then
+  rolls back, on a database that had no tables yet, it is rolled back too, and the
+  instance does not check again.
+- **`dbRetry` cannot help inside your transaction**: after a failure Postgres has aborted
+  it. Retry the whole transaction instead.
+- **Pass the driver, not the client under it.** Two drivers over one connection do not
+  wait for each other's transactions.
+- **Rows are the driver's.** Steve is tested on node-postgres. With another driver a
+  value may read differently: on PGlite, `healthPreview()`'s `count` comes back as a
+  number, not a string.
 
 ## Creating a job
 
@@ -266,7 +308,12 @@ Steve includes built-in database retry logic and health monitoring for productio
 
 ### Database Retry
 
-Automatically retry database operations on transient failures (connection timeouts, resets, etc.):
+Automatically retry database operations on transient failures. By default steve retries
+what sqlkit classifies as retryable: a connection that could not be made or was lost
+(refused, reset, terminated, a pool that timed out connecting), a server that is starting
+up, shutting down or out of connections, a deadlock, a serialization failure, and a lock
+not granted in time. A `retryableErrors` list replaces that with exactly its codes: an
+error is retried when its code is one of them, or its message contains one.
 
 ```typescript
 const jobs = new Jobs({
@@ -284,16 +331,18 @@ const jobs = new Jobs({
 
 ### Health Monitoring
 
-Monitor database health with periodic checks and callbacks:
+Monitor database health with periodic checks and callbacks. A check is one `select 1`; one
+that has not answered within `timeoutMs` (default 5 s) is unhealthy.
 
 ```typescript
 const jobs = new Jobs({
     db,
-    // Enable with defaults (checks every 30s)
+    // Enable with defaults (checks every 30s, each times out after 5s)
     dbHealthCheck: true,
     // Or customize
     dbHealthCheck: {
         intervalMs: 60_000,
+        timeoutMs: 2_000,
         onUnhealthy: (status) => console.error('DB unhealthy!', status),
         onHealthy: (status) => console.log('DB recovered!', status),
     },
@@ -306,6 +355,13 @@ console.log('DB healthy?', health?.healthy);
 // Or manually trigger a check
 const currentHealth = await jobs.checkDbHealth();
 ```
+
+### Errors
+
+A failed database call rejects with a `SqlError` from `@marianmeres/sqlkit`, or one of its
+subclasses (`ConnectionError`, `DeadlockError`, …). `code` and `message` are the
+driver's (node-postgres's for a pool or a client), and the original error is `cause`: read
+fields such as `detail` or `severity` there.
 
 See [USAGE_DB_RESILIENCE.md](USAGE_DB_RESILIENCE.md) for detailed configuration options.
 
@@ -420,6 +476,46 @@ Behavioral fixes. Most code needs no change, but review these:
 - **`unsubscribeAll()` also clears per-job callbacks.**
 - **`resetHard()` always resets**, even on an already-initialized instance.
 - **New: `purge()`** for deleting old terminal jobs.
+
+## Upgrading to 4.0
+
+4.0 runs every statement through [sqlkit](https://www.npmjs.com/package/@marianmeres/sqlkit).
+The public API is source-compatible: code written against 3.x needs no change, every
+method signature and the events are as they were, and the database schema is unchanged
+(no migration). It is a major because behaviour you can observe changes:
+
+- **Database errors are sqlkit's.** A failed database call rejects with a `SqlError` from
+  `@marianmeres/sqlkit` (`ConnectionError`, `DeadlockError`, …). `code` and `message` are
+  node-postgres's; the original error is `cause`, and fields such as `detail` or
+  `severity` are read there.
+- **`dbRetry` retries more:** deadlocks, serialization failures, a lock not granted in
+  time, a server shutting down or out of connections, a pool that timed out connecting, a
+  terminated connection. A code that appears only in an error's message no longer counts
+  (a `retryableErrors` list of your own still matches the message).
+- **`DbRetryOptions` values are checked.** A negative or fractional `maxRetries`, or a
+  `backoffMultiplier` below 1, is a `TypeError` at the first database call.
+- **A health check times out.** One that has not answered in 5 s is unhealthy
+  (`dbHealthCheck.timeoutMs`). `latencyMs` is `null` on failure and may be a fraction on
+  success. The warning logged on every failed check is gone; the logs and the callbacks on
+  a change of state stay.
+- **Steve listens to the pool's `error` event.** An idle connection the server dropped is
+  a process warning where, with no listener of your own, it used to end the process.
+- **An invalid `db` throws at construction.** `new Jobs()` with something that is not a
+  pool, a client or a driver throws there, not at the first query.
+- **`JobContext.db` is a sqlkit `Driver`.** `JobContext` is exported but internal.
+- **No new versions on JSR.** 3.1.2 is the last one there.
+- **Steve no longer depends on `pg`.** It never imported it at runtime; install the `pg`
+  you build your pool with, as you already do.
+- **Fixed: a job created with `run_at: null` or `""` runs.** It was stored without a run
+  time and never claimed; now it runs at once, like a job without `run_at`.
+- **Fixed: `fetchAll` filters are bound values.** A tenant named `"null"` matches itself.
+- **New: `db` accepts a sqlkit `Driver`** of the `pg` dialect. Read
+  [The `db` option](#the-db-option) before sharing one with steve.
+- **New: more than one processor on a single connection.** `start(n)` takes any `n` on a
+  `pg.Client`, or on a driver over one connection: handlers overlap, database work takes
+  its turn.
+- **New: `dbHealthCheck.timeoutMs`**, and the same option on the exported
+  `checkDbHealth(db, logger, { timeoutMs })` and on `DbHealthMonitor`.
 
 ## License
 

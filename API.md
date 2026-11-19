@@ -24,10 +24,11 @@ Complete API documentation for `@marianmeres/steve`.
   - [BACKOFF_STRATEGY](#backoff_strategy)
 - [Database Utilities](#database-utilities)
   - [withDbRetry](#withdbretry)
-  - [checkDbHealth](#checkdbhealth)
+  - [checkDbHealth](#checkdbhealth-1)
   - [DbHealthMonitor](#dbhealthmonitor)
   - [DbRetryOptions](#dbretryoptions)
   - [DbHealthStatus](#dbhealthstatus)
+- [Errors](#errors)
 
 ---
 
@@ -45,6 +46,8 @@ Creates a new Jobs instance.
 
 **Parameters:**
 - `options` - Configuration object (see [JobsOptions](#jobsoptions))
+
+**Throws:** `TypeError` when `db` is not a `pg.Pool`, a `pg.Client` or a sqlkit `Driver`, when it is a `Driver` whose dialect is not `pg`, or when a `dbHealthCheck` option is out of range. Nothing is sent to the database before the first call that needs it.
 
 **Example:**
 ```typescript
@@ -77,7 +80,7 @@ Starts job processing with the specified number of concurrent workers.
 
 **Behavior:**
 - **Throws** if initialization fails (e.g., database unreachable) so callers can fail fast.
-- **Any `processorsCount` works on any `db`.** On a single connection (a `pg.Client`) every statement takes its turn, so handlers overlap but database work does not. A `pg.Pool` is still the recommendation.
+- **Any `processorsCount` works on any `db`.** On a single connection (a `pg.Client`, or a `Driver` over one) every statement takes its turn, so handlers overlap but database work does not. A `pg.Pool` is still the recommendation.
 - **Idempotent** — calling `start()` while already running is a no-op with a warning log; it will NOT spawn additional processors. To restart, call `stop()` first.
 
 **Example:**
@@ -384,7 +387,7 @@ async healthPreview(
 ): Promise<HealthPreviewRow[]>
 ```
 
-Collects job statistics for health monitoring.
+Collects job statistics for health monitoring: one row per status.
 
 **Parameters:**
 - `sinceMinutesAgo` - Time window for statistics (default: `60`)
@@ -410,7 +413,7 @@ Gets the current database health status.
 async checkDbHealth(): Promise<DbHealthStatus>
 ```
 
-Manually triggers a database health check.
+Manually triggers a database health check: one `select 1`, unhealthy when it fails or has not answered within 5 s. Works whether or not `dbHealthCheck` is enabled, and never rejects for a database that is down. See [checkDbHealth](#checkdbhealth-1).
 
 ---
 
@@ -528,7 +531,7 @@ Configuration options for the Jobs manager.
 
 ```typescript
 interface JobsOptions {
-  db: pg.Pool | pg.Client;       // PostgreSQL connection (required). pg.Pool recommended
+  db: pg.Pool | pg.Client | Driver;  // PostgreSQL connection (required). pg.Pool recommended
   jobHandler?: JobHandler;       // Global job handler
   jobHandlers?: JobHandlersMap;  // Map of handlers by type
   tablePrefix?: string;          // Table name prefix (e.g., "myschema.")
@@ -537,13 +540,22 @@ interface JobsOptions {
   gracefulSigterm?: boolean;     // SIGTERM => stop(), then re-raise if no other listener (default: true)
   dbRetry?: DbRetryOptions | boolean;  // Enable retry on transient failures
   dbHealthCheck?: boolean | {    // Enable health monitoring
-    intervalMs?: number;
+    intervalMs?: number;         // Default: 30000
+    timeoutMs?: number;          // A check not answered by then is unhealthy. Default: 5000
     onUnhealthy?: (status: DbHealthStatus) => void;
     onHealthy?: (status: DbHealthStatus) => void;
   };
   autoCleanup?: boolean | AutoCleanupOptions;  // Periodic expired-reaper
 }
 ```
+
+`db` takes three forms:
+
+- a node-postgres `pg.Pool`, the recommendation;
+- a connected `pg.Client`: any number of processors works on it, but every statement takes its turn;
+- a sqlkit `Driver` (from `@marianmeres/sqlkit`) of the `pg` dialect, used as it is. A driver you share with steve carries your transactions: read [The `db` option](README.md#the-db-option) before passing one.
+
+The first two are declared by shape (sqlkit's `PgPoolLike` and `PgStandaloneClientLike`), so steve imports nothing from `pg`. Steve never closes what it is given.
 
 ---
 
@@ -615,6 +627,8 @@ interface HealthPreviewRow {
 }
 ```
 
+The types are what node-postgres returns for `COUNT` and `AVG`. Rows are the driver's: with another driver of the `pg` dialect a value may read differently (on PGlite, `count` comes back as a number).
+
 ---
 
 ## Constants
@@ -657,6 +671,8 @@ const BACKOFF_STRATEGY = {
 
 ## Database Utilities
 
+The `db` these utilities take is the same as [`JobsOptions.db`](#jobsoptions): a `pg.Pool`, a `pg.Client` or a sqlkit `Driver` of the `pg` dialect. A pool or client gets one driver per object, shared with every `Jobs` instance over it; steve never closes it.
+
 ### withDbRetry
 
 ```typescript
@@ -666,12 +682,24 @@ async function withDbRetry<T>(
 ): Promise<T>
 ```
 
-Wraps a database operation with exponential backoff retry logic. Automatically retries on transient database errors.
+Runs `fn`, and runs it again with exponential backoff while it rejects with a retryable error. Resolves with the first call that resolves; rejects with the last error once it is not retryable or no retry is left.
+
+By default an error is retryable when sqlkit classifies it so (`classifyPg`), for a sqlkit `SqlError` and for a raw node-postgres error alike:
+
+- a connection that could not be made or was lost: Node's socket codes (`ECONNREFUSED`, `ECONNRESET`, …), SQLSTATE class `08`, node-postgres's connection timeout and terminated connection;
+- a server that is starting up or shutting down (`57P01`–`57P03`), or out of connections (`53300`);
+- a deadlock (`40P01`), a serialization failure (`40001`), a lock not granted in time (`55P03`).
+
+`options.retryableErrors` replaces that classification with exactly its list: an error is retried when its `code` is one of the codes, or its message contains one.
+
+The whole function runs again, so wrap something safe to run twice: one statement, or one whole `transaction` call, never a part of a transaction.
+
+**Throws:** `TypeError` (a rejection, before `fn` is called) when an option is of the wrong type or out of range, such as a negative or fractional `maxRetries` or a `backoffMultiplier` below 1.
 
 **Example:**
 ```typescript
 const result = await withDbRetry(
-  async () => await db.query("SELECT * FROM users"),
+  async () => await pool.query("SELECT * FROM users"),
   { maxRetries: 5, initialDelayMs: 200 }
 );
 ```
@@ -682,12 +710,28 @@ const result = await withDbRetry(
 
 ```typescript
 async function checkDbHealth(
-  db: pg.Pool | pg.Client,
-  logger?: Logger
+  db: pg.Pool | pg.Client | Driver,
+  logger?: Logger,
+  options?: { timeoutMs?: number }
 ): Promise<DbHealthStatus>
 ```
 
-Performs a one-time health check against the database. Measures latency and retrieves PostgreSQL version.
+Performs a one-time health check: one `select 1`, timed, raced against `timeoutMs`. A check that fails, or has not answered by then, is unhealthy with `latencyMs: null` (a timed-out query is abandoned, not cancelled). After a healthy check it also reports the PostgreSQL version, asked once per driver.
+
+Never rejects for a database that is down; a failed check is logged through `logger.error`.
+
+**Parameters:**
+- `db` - The database (see above)
+- `logger` - Optional logger for the failure message
+- `options.timeoutMs` - Milliseconds after which a check that has not answered is unhealthy, above 0 (default: `5000`)
+
+**Throws:** `TypeError` (a rejection) when `db` is not a database, or `timeoutMs` is of the wrong type or out of range.
+
+**Example:**
+```typescript
+const status = await checkDbHealth(pool, logger, { timeoutMs: 2000 });
+if (!status.healthy) console.error(`DB error: ${status.error}`);
+```
 
 ---
 
@@ -697,8 +741,9 @@ Periodic database health monitor with state change callbacks.
 
 ```typescript
 class DbHealthMonitor {
-  constructor(db: pg.Pool | pg.Client, options?: {
-    intervalMs?: number;
+  constructor(db: pg.Pool | pg.Client | Driver, options?: {
+    intervalMs?: number;   // Default: 30000 (0 also means the default)
+    timeoutMs?: number;    // Per check, as in checkDbHealth. Default: 5000
     logger?: Logger;
     onUnhealthy?: (status: DbHealthStatus) => void;
     onHealthy?: (status: DbHealthStatus) => void;
@@ -710,10 +755,17 @@ class DbHealthMonitor {
 }
 ```
 
+- `start()` checks at once and resolves after that first check; the next check starts `intervalMs` after the previous one answered or timed out, so checks never overlap. Its timers never keep a process alive.
+- `onUnhealthy` fires when a check is unhealthy after a healthy one, or when the first check is; `onHealthy` fires when a check is healthy after an unhealthy one. A healthy first check is no change. The monitor logs on these changes only, not on every failed check.
+- `stop()` leaves no check scheduled. `getLastStatus()` is the latest status (kept across `stop()`), `null` before the first check.
+
+**Throws:** `TypeError` at construction when `db` is not a database, or an option is of the wrong type or out of range.
+
 **Example:**
 ```typescript
 const monitor = new DbHealthMonitor(pool, {
   intervalMs: 30000,
+  timeoutMs: 5000,
   onUnhealthy: (status) => alertOps(status.error),
   onHealthy: () => clearAlert(),
 });
@@ -729,18 +781,16 @@ monitor.stop();
 
 ```typescript
 interface DbRetryOptions {
-  maxRetries?: number;        // Default: 3
-  initialDelayMs?: number;    // Default: 100
-  maxDelayMs?: number;        // Default: 5000
-  backoffMultiplier?: number; // Default: 2
-  retryableErrors?: string[]; // Error codes to retry
-  logger?: Logger;
+  maxRetries?: number;        // Retries after the first call, a non-negative integer. Default: 3
+  initialDelayMs?: number;    // Wait before the first retry. Default: 100
+  maxDelayMs?: number;        // Longest wait between two calls. Default: 5000
+  backoffMultiplier?: number; // Each wait times this for the next, at least 1. Default: 2
+  retryableErrors?: string[]; // Replaces the default classification (see withDbRetry)
+  logger?: Logger;            // Warns before each retry
 }
 ```
 
-**Default Retryable Errors:**
-- `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`
-- PostgreSQL: `57P03`, `08006`, `08003`, `08000`
+The wait before retry `n` is `initialDelayMs * backoffMultiplier ** (n - 1)`, at most `maxDelayMs`. With `dbRetry: true` on `Jobs`, every option has its default and the logger is the instance's.
 
 ---
 
@@ -749,9 +799,33 @@ interface DbRetryOptions {
 ```typescript
 interface DbHealthStatus {
   healthy: boolean;
-  latencyMs: number | null;
-  error: string | null;
-  timestamp: Date;
-  pgVersion?: string;
+  latencyMs: number | null;  // null when the check failed or timed out; may be a fraction
+  error: string | null;      // The driver's message, or the timeout's; null when healthy
+  timestamp: Date;           // When the check was sent
+  pgVersion?: string;        // e.g. "18.6", once known, on a healthy status
+}
+```
+
+---
+
+## Errors
+
+A failed database call from any `Jobs` method rejects with a `SqlError` from `@marianmeres/sqlkit`, or one of its subclasses: `ConnectionError`, `DeadlockError`, `SerializationError`, `BusyError`, `UniqueViolationError`, `TransactionAbortedError`, …
+
+- `kind` names the subclass (`"connection"`, `"deadlock"`, …). Prefer it to `instanceof`, which matches only when your app resolves the same copy of `@marianmeres/sqlkit` as steve.
+- `code` is the SQLSTATE (or Node's code, such as `ECONNRESET`, for a lost socket) and `message` is the driver's message: node-postgres's for a pool or a client.
+- The driver's original error is `cause`, untouched: read fields such as `detail`, `hint` or `severity` there.
+- `retryable` is `true` for the kinds `dbRetry` retries by default.
+
+A programming mistake (a `db` that is not a database, an option of the wrong type or range, `purge()` with a non-terminal status) is a `TypeError`, never wrapped. What a job handler throws is that job's failure, recorded on its attempt as it was thrown.
+
+```typescript
+try {
+  await jobs.create("email", payload);
+} catch (e) {
+  if ((e as { kind?: string }).kind === "connection") {
+    console.error("database unreachable:", (e as Error).cause);
+  }
+  throw e;
 }
 ```

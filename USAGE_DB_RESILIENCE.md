@@ -2,17 +2,17 @@
 
 ## Overview
 
-Steve now includes built-in database retry logic and health monitoring to improve resilience and observability.
+Steve includes built-in database retry logic and health monitoring to improve resilience and observability. Both run on [sqlkit](https://www.npmjs.com/package/@marianmeres/sqlkit)'s retry and health check.
 
 ## Features
 
 ### 1. Automatic Database Retry
 
-Automatically retry database operations on transient failures like connection timeouts, connection resets, etc.
+Automatically retry database operations on transient failures: a lost or refused connection, a server starting up, shutting down or out of connections, a deadlock, a serialization failure, a lock not granted in time.
 
 ### 2. Health Monitoring
 
-Periodically check database health and get notified when the database becomes unhealthy or recovers.
+Periodically check database health and get notified when the database becomes unhealthy or recovers. A check that has not answered within 5 s is unhealthy.
 
 ## Usage Examples
 
@@ -48,8 +48,8 @@ const jobs = new Jobs({
 		initialDelayMs: 200,        // Start with 200ms delay
 		maxDelayMs: 10_000,         // Cap delay at 10 seconds
 		backoffMultiplier: 2,       // Double the delay each retry
-		retryableErrors: [          // Custom error codes to retry
-			'ECONNREFUSED',
+		retryableErrors: [          // Optional: replaces the default classification
+			'ECONNREFUSED',         // with exactly these codes
 			'ECONNRESET',
 			'ETIMEDOUT',
 		],
@@ -67,6 +67,7 @@ const jobs = new Jobs({
 	// Custom health check settings
 	dbHealthCheck: {
 		intervalMs: 60_000, // Check every minute
+		timeoutMs: 2_000,   // A check not answered within 2s is unhealthy (default 5s)
 
 		onUnhealthy: (status) => {
 			// Alert your monitoring system
@@ -164,21 +165,30 @@ app.get('/health', (req, res) => {
 | `backoffMultiplier` | number   | 2         | Multiplier for exponential backoff    |
 | `retryableErrors`   | string[] | See below | Error codes that trigger retry        |
 
-**Default Retryable Errors:**
-- `ECONNREFUSED` - Connection refused
-- `ECONNRESET` - Connection reset
-- `ETIMEDOUT` - Operation timed out
-- `ENOTFOUND` - DNS lookup failed
-- `57P03` - PostgreSQL: cannot_connect_now
-- `08006` - PostgreSQL: connection_failure
-- `08003` - PostgreSQL: connection_does_not_exist
-- `08000` - PostgreSQL: connection_exception
+`maxRetries` is a non-negative integer and `backoffMultiplier` at least 1; an option of the wrong type or out of range is a `TypeError` at the first database call. The wait before retry `n` is `initialDelayMs * backoffMultiplier ** (n - 1)`, at most `maxDelayMs`.
+
+**What is retried by default.** Without `retryableErrors`, an error is retried when sqlkit's Postgres classifier calls it retryable, whether it is a sqlkit `SqlError` or a raw node-postgres error:
+
+| Kind          | What happened                                     | Codes                                                                                                                                                         |
+| ------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| connection    | the connection could not be made, or was lost     | `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, `EPIPE`, `EAI_AGAIN`, class `08`; node-postgres's connect timeout and terminated connection (no code) |
+| connection    | the server is shutting down, starting up, or full | `57P01`, `57P02`, `57P03`, `53300`                                                                                                                            |
+| deadlock      | chosen as a deadlock's victim                     | `40P01`                                                                                                                                                       |
+| serialization | a concurrent transaction won                      | `40001`                                                                                                                                                       |
+| busy          | a lock was not granted in time                    | `55P03`                                                                                                                                                       |
+
+A code that appears only inside an error's message does not count.
+
+**`retryableErrors`** replaces that classification with exactly its list: an error is retried when its `code` is one of them, or its message contains one.
+
+A retry runs the whole operation again: steve wraps one statement, or one whole transaction, at a time. Inside a transaction of your own (a sqlkit `Driver` you share with steve) a retry cannot help: after a failure Postgres has aborted that transaction.
 
 ### DbHealthCheckOptions
 
 | Option        | Type     | Default   | Description                        |
 | ------------- | -------- | --------- | ---------------------------------- |
 | `intervalMs`  | number   | 30000     | How often to check health (ms)     |
+| `timeoutMs`   | number   | 5000      | A check not answered by then fails |
 | `onUnhealthy` | function | undefined | Callback when DB becomes unhealthy |
 | `onHealthy`   | function | undefined | Callback when DB recovers          |
 
@@ -186,13 +196,19 @@ app.get('/health', (req, res) => {
 
 ```typescript
 interface DbHealthStatus {
-	healthy: boolean;      // Whether the database is healthy
-	latencyMs: number;     // Query latency in milliseconds
-	error: string | null;  // Error message if unhealthy
-	timestamp: Date;       // When the check was performed
-	pgVersion?: string;    // PostgreSQL version number
+	healthy: boolean;          // Whether the database is healthy
+	latencyMs: number | null;  // Query latency in ms (may be a fraction); null on failure
+	error: string | null;      // The driver's message, or the timeout's; null when healthy
+	timestamp: Date;           // When the check was sent
+	pgVersion?: string;        // PostgreSQL version ("18.6"), once known, when healthy
 }
 ```
+
+The next check starts `intervalMs` after the previous one answered or timed out, so checks never overlap, and the monitor's timers never keep a process alive. `onUnhealthy` fires when the database goes from healthy to unhealthy (or the first check fails), `onHealthy` when it recovers. Steve logs on those changes only, not on every failed check.
+
+## Errors
+
+A failed database call rejects with a `SqlError` from `@marianmeres/sqlkit` (`ConnectionError`, `DeadlockError`, …). `code` and `message` are the driver's (node-postgres's for a pool or a client); the original error is `cause`, where fields such as `detail` or `severity` are read. `retryable` is `true` for the kinds retried by default. See [API.md](API.md#errors).
 
 ## API Methods
 
@@ -202,7 +218,7 @@ Returns the last health check result, or `null` if health monitoring is not enab
 
 ### `jobs.checkDbHealth(): Promise<DbHealthStatus>`
 
-Manually performs a health check and returns the result. Works even if health monitoring is not enabled.
+Manually performs a health check and returns the result, with the default 5 s timeout. Works even if health monitoring is not enabled, and never rejects for a database that is down.
 
 ## Benefits
 
