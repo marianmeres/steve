@@ -1,7 +1,6 @@
 # @marianmeres/steve
 
 [![NPM version](https://img.shields.io/npm/v/@marianmeres/steve.svg)](https://www.npmjs.com/package/@marianmeres/steve)
-[![JSR version](https://jsr.io/badges/@marianmeres/steve)](https://jsr.io/@marianmeres/steve)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 PostgreSQL based jobs processing manager.
@@ -17,11 +16,11 @@ Uses [node-postgres](https://node-postgres.com/) internally.
 ## Installation
 
 ```shell
-npm i @marianmeres/steve                # or pnpm add
-deno add jsr:@marianmeres/steve         # Deno
+npm i @marianmeres/steve   # or pnpm add
 ```
 
-The npm package targets Node >= 24.12.
+The package targets Node >= 24.12 and is published to npm only. 3.1.2 is the last version
+on JSR, where it stays installable.
 
 ## Basic Usage
 
@@ -352,7 +351,7 @@ PostgreSQL database: copy `.env.example` to `.env` and set the `TEST_PG_*` crede
 | `pnpm run ci`                       | typecheck + lint + test, what CI runs                       |
 | `pnpm run build`                    | `tsc -p tsconfig.build.json` → `dist/`                      |
 | `pnpm run example`                  | the jobs monitor example above                              |
-| `pnpm run rp` / `pnpm run rpm`      | patch / minor release, then publish to npm and JSR          |
+| `pnpm run rp` / `pnpm run rpm`      | patch / minor release, then publish to npm                  |
 
 ## Upgrading from 1.x to 2.0
 

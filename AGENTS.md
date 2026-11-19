@@ -6,14 +6,14 @@
   Biome; PostgreSQL via the `pg` driver
 - **Install**: `pnpm install` | **Test**: `pnpm test` | **Check all**: `pnpm run ci` |
   **Build**: `pnpm run build` | **Example**: `pnpm run example`
-- **Distribution**: one source, two registries. npm gets `dist/` (ESM + `.d.ts`); JSR
-  (`jsr.json`) gets `src/`, for the Deno consumers that still import it via `jsr:`.
+- **Distribution**: npm only, `dist/` (ESM + `.d.ts`). 3.1.2 is the last version on JSR;
+  no new versions go there.
 
 ## Package Overview
 
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
-- **Runtime**: Node.js (also published to JSR; Deno is a consumer runtime, not a dev one)
+- **Runtime**: Node.js
 - **Version**: 3.1.0
 - **License**: MIT
 
@@ -33,7 +33,7 @@ Steve is a PostgreSQL-based job processing manager that provides:
 
 ```
 src/
-├── index.ts                # Main entry point (npm + JSR "exports"), re-exports public API
+├── index.ts                # Main entry point (package "exports"), re-exports public API
 └── steve/
     ├── jobs.ts             # Main Jobs class and public types
     ├── job/                # Internal job operations
@@ -67,8 +67,7 @@ src/
 - [ ] Consumer callbacks are invoked ONLY via `_events.ts` (`_safeInvoke`) or `#onEvent` — never call a user callback bare
 - [ ] `job/_*.ts` modules are imported by `jobs.ts`: never read `JOB_STATUS` / `BACKOFF_STRATEGY` at module top level (circular-import TDZ) — only inside functions
 - [ ] The reaper (`_mark-expired.ts`) measures `updated_at`, never `started_at`
-- [ ] Run the full gate: `pnpm run ci` (typecheck + Biome + tests); `pnpm run test:deno`
-  too before a JSR publish
+- [ ] Run the full gate: `pnpm run ci` (typecheck + Biome + tests)
 - [ ] Ensure PostgreSQL test database is available (see `.env.example`)
 
 ## Public API Exports
@@ -269,27 +268,18 @@ PENDING → RUNNING → COMPLETED
    runs. `example/index.html` is excluded (it inlines vendor CSS). Lint runs with
    `--error-on-warnings`, so a warning fails CI; `noNonNullAssertion` is off for `tests/**`
    and `example/**`.
-4. **Versioning / releasing** (human action): `package.json` is the manifest of record;
-   `jsr.json` has no `version`. `pnpm run rp` / `rpm` = `@marianmeres/release` via npx
-   (bump, commit, tag, push), then `pnpm publish` (`prepublishOnly`: `ci` + `build`), then
-   `publish:jsr` (`test:deno` + `deno publish --set-version`).
-5. **JSR import map**: `deno publish` rewrites each bare specifier in the uploaded `src/`,
-   through `jsr.json`'s `imports` first and `package.json` otherwise (which yields `npm:`).
-   `jsr.json` maps the four `@marianmeres/*` deps to `jsr:`, so Deno consumers that already
-   import them from JSR get one copy, not a second npm one; `pg` stays `npm:` via
-   `package.json`. Keep the ranges in both manifests equal, and map any new
-   `@marianmeres/*` dependency in `jsr.json` too. Only `deno publish` reads `jsr.json`:
-   `test:deno` still resolves through `node_modules`.
+4. **Versioning / releasing** (human action): `package.json` is the only manifest.
+   `pnpm run rp` / `rpm` = `@marianmeres/release` via npx (bump, commit, tag, push), then
+   `pnpm publish` (`prepublishOnly`: `ci` + `build`). npm is the only registry.
 
 ## Testing
 
 ```bash
 pnpm test           # Node, the gate
-pnpm run test:deno  # the same suite on Deno, before a JSR publish
 ```
 
-`node --test` runs with `--test-concurrency=1`, so files run one at a time as `deno test`
-ran them: every file hits the same database and many tests are timing-based
+`node --test` runs with `--test-concurrency=1`, so files run one at a time: every file
+hits the same database and many tests are timing-based
 (sleep, then assert). Tests are
 `node:test` + `node:assert/strict`, registered through `tests/_tests-runner.ts` (each test
 gets a fresh `pg.Pool`, ended afterwards).
@@ -385,5 +375,5 @@ const jobs = new Jobs({
 | Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                            |
 | Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
 | Example server      | `example/server.ts`                                                                                                          |
-| Config              | `package.json`, `jsr.json`, `tsconfig.json`, `biome.json`                                                                    |
+| Config              | `package.json`, `tsconfig.json`, `biome.json`                                                                                |
 | CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                     |
