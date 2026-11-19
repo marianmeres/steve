@@ -67,13 +67,14 @@
     "@marianmeres/data-to-sql-params": "^1.6.0",
     "@marianmeres/parse-boolean": "^2.1.0",
     "@marianmeres/pubsub": "^3.0.0",
-    "@types/pg": "^8.23.1",
-    "pg": "^8.23.1"
+    "@marianmeres/sqlkit": "^0.1.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",
     "@marianmeres/demino": "^2.0.0",
     "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
     "typescript": "^7.0.2"
   }
 }

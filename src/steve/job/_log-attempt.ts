@@ -1,13 +1,13 @@
+import type { Driver } from "@marianmeres/sqlkit";
 import { ATTEMPT_STATUS, type Job, type JobAttempt, type JobContext } from "../jobs.ts";
-import type { Queryable } from "../utils/with-transaction.ts";
 
 /** Insert a new attempt row (status left NULL until the attempt completes). */
 export async function _logAttemptStart(
-	db: Queryable,
+	db: Driver,
 	tableAttempts: string,
 	job: Job,
 ): Promise<number> {
-	const { rows } = await db.query(
+	const { rows } = await db.query<{ id: number }>(
 		`INSERT INTO ${tableAttempts} (job_id, attempt_number)
 		VALUES ($1, $2)
 		RETURNING id`,
@@ -16,12 +16,13 @@ export async function _logAttemptStart(
 		[job.id, job.attempts],
 	);
 
-	return rows[0].id as number;
+	// INSERT … RETURNING answers exactly one row.
+	return (rows[0] as { id: number }).id;
 }
 
 /** Mark an attempt row as successful. */
 export async function _logAttemptSuccess(
-	db: Queryable,
+	db: Driver,
 	tableAttempts: string,
 	attemptId: number,
 ): Promise<void> {
@@ -36,7 +37,7 @@ export async function _logAttemptSuccess(
 
 /** Mark an attempt row as errored and store error message + details. */
 export async function _logAttemptError(
-	db: Queryable,
+	db: Driver,
 	tableAttempts: string,
 	attemptId: number,
 	errMessage: string,
@@ -60,7 +61,7 @@ export async function _logAttemptFetchAll(
 ): Promise<JobAttempt[]> {
 	const { db, tableNames } = context;
 	const { tableAttempts } = tableNames;
-	const { rows } = await db.query(
+	const { rows } = await db.query<JobAttempt>(
 		`SELECT * FROM ${tableAttempts} WHERE job_id = $1 ORDER BY id asc`,
 		[jobId],
 	);

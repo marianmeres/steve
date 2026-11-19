@@ -1,7 +1,7 @@
 import process from "node:process";
 import { createClog, type Logger } from "@marianmeres/clog";
 import { createPubSub, type Subscriber, type Unsubscriber } from "@marianmeres/pubsub";
-import type pg from "pg";
+import type { Driver } from "@marianmeres/sqlkit";
 import { _claimNextJob } from "./job/_claim-next.ts";
 import { _create } from "./job/_create.ts";
 import { _publishDone } from "./job/_events.ts";
@@ -17,10 +17,10 @@ import {
 	DbHealthMonitor,
 	type DbHealthStatus,
 } from "./utils/db-health.ts";
+import { type SteveDb, toDriver } from "./utils/driver.ts";
 import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 import { type DbRetryOptions, withDbRetry } from "./utils/with-db-retry.ts";
-import { isPool } from "./utils/with-transaction.ts";
 
 /**
  * Available job statuses.
@@ -97,8 +97,8 @@ export type JobAwareFn = (job: Job) => void | Promise<void>;
  * @internal
  */
 export interface JobContext {
-	/** PostgreSQL database connection pool or client */
-	db: pg.Pool | pg.Client;
+	/** The sqlkit driver every statement runs on (see `toDriver`) */
+	db: Driver;
 	/** Table name configuration */
 	tableNames: {
 		tableJobs: string;
@@ -265,8 +265,8 @@ export interface JobsOptions {
 	jobHandler?: JobHandler;
 	/** Map of handlers keyed by job type (takes priority over jobHandler) */
 	jobHandlers?: JobHandlersMap;
-	/** PostgreSQL connection pool or client instance */
-	db: pg.Pool | pg.Client;
+	/** PostgreSQL connection: a `pg.Pool`, a `pg.Client` or a sqlkit `Driver` */
+	db: SteveDb;
 	/** Table name prefix for non-public schemas (e.g., "myschema.") */
 	tablePrefix?: string;
 	/** Polling interval in milliseconds when no jobs are available (default: 1000) */
@@ -362,7 +362,7 @@ export class Jobs {
 	readonly gracefulSigterm: boolean;
 	readonly tablePrefix: string;
 
-	#db: pg.Pool | pg.Client;
+	#db: Driver;
 	#jobHandler: JobHandler | undefined;
 	// A Map (not a plain object) so that job types such as "constructor" or
 	// "__proto__" can never resolve to Object.prototype members and be invoked.
@@ -421,7 +421,7 @@ export class Jobs {
 			autoCleanup,
 		} = options || {};
 
-		this.#db = db;
+		this.#db = toDriver(db);
 		this.#jobHandler = jobHandler;
 		this.#jobHandlers = new Map(
 			Object.entries(jobHandlers ?? {}).filter(
@@ -688,9 +688,8 @@ export class Jobs {
 	 *
 	 * Throws if initialization fails (e.g., database unreachable) so callers can fail fast.
 	 *
-	 * Throws if `db` is a `pg.Client` and `processorsCount > 1`: concurrent processors
-	 * would interleave their BEGIN/COMMIT/ROLLBACK on the single connection, which is not
-	 * a transaction at all. Use a `pg.Pool` for concurrency.
+	 * Throws if `db` is a single connection (a `pg.Client`, or a `Driver` without
+	 * concurrent writers) and `processorsCount > 1`. Use a `pg.Pool` for concurrency.
 	 *
 	 * @param processorsCount - Number of concurrent job processors (default: 2)
 	 * @throws If database initialization fails, or on an unsupported db/processors combination
@@ -711,10 +710,9 @@ export class Jobs {
 			this.#logger?.warn?.(`Jobs.start() called while already running — ignored.`);
 			return;
 		}
-		if (!isPool(this.#db) && processorsCount > 1) {
+		if (!this.#db.capabilities.concurrentWriters && processorsCount > 1) {
 			const msg =
-				`A pg.Client supports a single processor only (requested ${processorsCount}): ` +
-				`concurrent transactions would interleave on the one connection. ` +
+				`A single connection supports a single processor only (requested ${processorsCount}). ` +
 				`Pass a pg.Pool for concurrency.`;
 			this.#logger?.error?.(msg);
 			throw new Error(msg);

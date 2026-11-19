@@ -59,5 +59,5 @@ export async function _purge(
 		params,
 	);
 
-	return rowCount ?? 0;
+	return rowCount;
 }

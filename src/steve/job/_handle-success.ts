@@ -1,5 +1,4 @@
 import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
-import { withTransaction } from "../utils/with-transaction.ts";
 import { _logAttemptSuccess } from "./_log-attempt.ts";
 
 /**
@@ -29,8 +28,8 @@ export async function _handleJobSuccess(
 		});
 	}
 
-	return await withTransaction(db, async (client) => {
-		const { rows } = await client.query(
+	return await db.transaction(async (tx) => {
+		const { rows } = await tx.query<Job>(
 			`UPDATE ${tableJobs}
 			SET status = '${JOB_STATUS.COMPLETED}',
 				completed_at = NOW(),
@@ -43,8 +42,8 @@ export async function _handleJobSuccess(
 			[serialized, job.id, job.attempts],
 		);
 
-		await _logAttemptSuccess(client, tableAttempts, attemptId);
+		await _logAttemptSuccess(tx, tableAttempts, attemptId);
 
-		return (rows[0] as Job | undefined) ?? null;
+		return rows[0] ?? null;
 	});
 }

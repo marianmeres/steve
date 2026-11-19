@@ -178,12 +178,9 @@ importers:
       '@marianmeres/pubsub':
         specifier: ^3.0.0
         version: 3.0.0
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
+      '@marianmeres/sqlkit':
+        specifier: ^0.1.1
+        version: 0.1.1
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.6.3
@@ -194,6 +191,12 @@ importers:
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.6
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -292,8 +295,14 @@ packages:
   '@marianmeres/http-utils@2.12.0':
     resolution: {integrity: sha512-qTId10xYZckGGBiSVdeQLbJYKQqAfWPeEtlgSNp9RQdd32SjFhcSLzTCaB0yXFA7P4Yuztn1iUbiYEyUBldK5w==}
 
+  '@marianmeres/item-collection@1.4.2':
+    resolution: {integrity: sha512-g8iG2ewTGpPbF2oGFcBxI4NB3St5cyIoW8JncN1TY9C8NkfoJGlFuGNBxo7W2RdoXNXRWRvUd27IxzdiiA82Sg==}
+
   '@marianmeres/midware@1.5.0':
     resolution: {integrity: sha512-hZ6PgwHNfmWo7CeAt607xfTvlsK4mvaHuMdcFTvmVhGzs4bVEDVA2L4WaRjWHxWwEeO1/vMWJDkd0OArc2TyJQ==}
+
+  '@marianmeres/migrate@2.0.0':
+    resolution: {integrity: sha512-ro5bQGW9MvW/Cb5sIIPtWwQyEQr3alutIQvDzlLPnV5fuEKSiyNKXYeVbIYp0g5iPzVr7PfJ2HmnYbeMJtc2Ow==}
 
   '@marianmeres/parse-boolean@2.1.0':
     resolution: {integrity: sha512-OxMUiYT2AlZk6JT+lGevLqw2aIheLYgapy4ysGvSSNEGBtIfwLx2Cco3rafCEvHgoEMyGl/B681a+u7ESnH4JA==}
@@ -301,8 +310,18 @@ packages:
   '@marianmeres/pubsub@3.0.0':
     resolution: {integrity: sha512-yUEULA/c2f9GOiND+AiVm+6btBtdyBfigqhsTsSKumD5/Ni2wV0wZj/qn2llbACEKR4SqEyqKH6Cy4nKecW2ng==}
 
+  '@marianmeres/searchable@2.10.0':
+    resolution: {integrity: sha512-n8pTWvHTfY/+SrUFaUDKJIzojnC3UK8MdiNWGfV5TyN5OQ2yhnZ/LxHpZX5N9ksAsSv/KUuS9KyHUO+puP7ACA==}
+
+  '@marianmeres/semver@1.0.1':
+    resolution: {integrity: sha512-dzFgO+1AnFwW6OeEqSjSi/vZ571mgo0BnTGmtAAw7Nm/rJ0mrGV0Za5aPxezycZKUlVTdKgoZbn78e/zz/7J5A==}
+
   '@marianmeres/simple-router@3.4.0':
     resolution: {integrity: sha512-cD4lyykIMNBDAbmfcTBHoTRJjkY5Wdi2knecGCwMSU5sy8ARTGeapjg9gOG64dzwvvDlLggaZlOoQSgwgefDxg==}
+
+  '@marianmeres/sqlkit@0.1.1':
+    resolution: {integrity: sha512-g1RyFg+KleDmvBSrotdcPLTmwqSqWIYtWSLTe8+kVIc/oIngaJsj6aZWr8YgPWtTDJ/R9qNsTSjFAp+44i3n8g==}
+    engines: {node: '>=24.12'}
 
   '@types/node@26.6.6':
     resolution: {integrity: sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==}
@@ -561,15 +580,35 @@ snapshots:
 
   '@marianmeres/http-utils@2.12.0': {}
 
+  '@marianmeres/item-collection@1.4.2':
+    dependencies:
+      '@marianmeres/pubsub': 3.0.0
+      '@marianmeres/searchable': 2.10.0
+
   '@marianmeres/midware@1.5.0': {}
+
+  '@marianmeres/migrate@2.0.0':
+    dependencies:
+      '@marianmeres/item-collection': 1.4.2
+      '@marianmeres/semver': 1.0.1
 
   '@marianmeres/parse-boolean@2.1.0': {}
 
   '@marianmeres/pubsub@3.0.0': {}
 
+  '@marianmeres/searchable@2.10.0':
+    dependencies:
+      '@marianmeres/pubsub': 3.0.0
+
+  '@marianmeres/semver@1.0.1': {}
+
   '@marianmeres/simple-router@3.4.0':
     dependencies:
       '@marianmeres/pubsub': 3.0.0
+
+  '@marianmeres/sqlkit@0.1.1':
+    dependencies:
+      '@marianmeres/migrate': 2.0.0
 
   '@types/node@26.6.6':
     dependencies:

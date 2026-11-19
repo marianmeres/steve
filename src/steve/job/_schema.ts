@@ -1,5 +1,4 @@
 import { BACKOFF_STRATEGY, JOB_STATUS, type JobContext } from "../jobs.ts";
-import { withTransaction } from "../utils/with-transaction.ts";
 
 export function _schemaDrop(context: Pick<JobContext, "tableNames">): string {
 	const { tableNames } = context;
@@ -95,21 +94,25 @@ export async function _initialize(context: JobContext, hard = false): Promise<vo
 		.filter(Boolean)
 		.join("\n");
 
-	await withTransaction(db, async (client) => {
+	await db.transaction(async (tx) => {
 		// Serialize concurrent initializers (e.g. N replicas booting at once on a fresh
 		// database) so the CREATE ... IF NOT EXISTS statements cannot race each other
 		// into "duplicate key value violates unique constraint pg_type_typname_nsp_index".
 		// Transaction-scoped: released automatically on COMMIT/ROLLBACK.
-		await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+		//
+		// Kept as this statement rather than sqlkit's `exclusive()`, which keys its lock
+		// differently: replicas of different steve versions must wait for each other.
+		await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
 			`steve:${tableNames.tableJobs}`,
 		]);
-		await client.query(sql);
+		// A script of many statements: `exec`, not `query` (which runs exactly one).
+		await tx.exec(sql);
 	});
 }
 
 export async function _uninstall(context: JobContext): Promise<void> {
 	const { db } = context;
-	await withTransaction(db, async (client) => {
-		await client.query(_schemaDrop(context));
+	await db.transaction(async (tx) => {
+		await tx.exec(_schemaDrop(context));
 	});
 }

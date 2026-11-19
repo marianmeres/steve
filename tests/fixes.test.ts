@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import type pg from "pg";
 import { JOB_STATUS, type Job, type JobHandler, Jobs } from "../src/index.ts";
 import type { JobContext } from "../src/steve/jobs.ts";
+import { isPool, toDriver } from "../src/steve/utils/driver.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
-import { isPool, withTransaction } from "../src/steve/utils/with-transaction.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
 const tablePrefix = "_fixes_";
@@ -59,85 +59,76 @@ testsRunner([
 	// ---------------------------------------------------------------
 	// C1 — transactions run on a single connection
 	{
-		name: "withTransaction: BEGIN/work/COMMIT all run on the same client",
+		name: "transactions: a finalization runs begin…commit on one pooled client",
 		async fn({ db }) {
 			assert(isPool(db));
+			const jobs = await _createJobs(db, { jobHandler: () => ({ ok: true }) });
 
-			const commands: { clientIdx: number; sql: string }[] = [];
-			const originalConnect = (db as pg.Pool).connect.bind(db);
+			// Record every statement with the index of the client it ran on. The pool
+			// hands back the same object for the same connection, so wrap each one once.
+			const statements: { clientIdx: number; sql: string }[] = [];
+			const wrapped = new WeakSet<object>();
 			let clientCounter = 0;
-			(db as pg.Pool).connect = (async (...args: unknown[]) => {
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-				const client = await (originalConnect as any)(...args);
-				const idx = clientCounter++;
-				const origQuery = client.query.bind(client);
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-				(client as any).query = async (...qargs: unknown[]) => {
-					commands.push({
-						clientIdx: idx,
-						sql: String(qargs[0]).trim().slice(0, 40),
-					});
+			const originalConnect = db.connect.bind(db);
+			// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
+			(db as any).connect = async () => {
+				const client = await originalConnect();
+				if (!wrapped.has(client)) {
+					wrapped.add(client);
+					const idx = clientCounter++;
+					const origQuery = client.query.bind(client);
 					// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-					return await (origQuery as any)(...qargs);
-				};
+					(client as any).query = (q: any, ...rest: unknown[]) => {
+						// sqlkit sends a config object; anything else may send text
+						const sql = typeof q === "string" ? q : q.text;
+						statements.push({ clientIdx: idx, sql: String(sql).trim() });
+						// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
+						return (origQuery as any)(q, ...rest);
+					};
+				}
 				return client;
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-			}) as any;
+			};
 
 			try {
-				await withTransaction(db, async (client) => {
-					await client.query("SELECT 1");
-					await client.query("SELECT 2");
+				// `onDone` rather than polling `find()`: no statement of the test's own
+				// may run while the finalization's transaction is open.
+				const done = new Promise<Job>((resolve) => {
+					jobs.onDone("x", resolve);
 				});
+				await jobs.start(1);
+				const created = await jobs.create("x", {}, { max_attempts: 1 });
+				const finalized = await done;
+				assert.deepEqual(finalized.uid, created.uid);
+				assert.deepEqual(finalized.status, JOB_STATUS.COMPLETED);
+				await jobs.stop();
 
-				const clientIndexes = new Set(commands.map((c) => c.clientIdx));
+				const is = (i: number, word: string) =>
+					statements[i]!.sql.toLowerCase() === word;
+				const update = statements.findIndex((s) =>
+					/SET status = 'completed'/i.test(s.sql),
+				);
+				assert(update > 0, "the finalization's UPDATE was recorded");
+				let begin = update;
+				while (begin >= 0 && !is(begin, "begin")) begin--;
+				let commit = update;
+				while (commit < statements.length && !is(commit, "commit")) commit++;
+				assert(begin >= 0, "a begin precedes the finalization");
+				assert(commit < statements.length, "a commit follows the finalization");
+
+				const tx = statements.slice(begin, commit + 1);
+				assert(
+					tx.some((s) => /__job_attempt_log/.test(s.sql)),
+					"the attempt log is written inside the same transaction",
+				);
 				assert.deepEqual(
-					clientIndexes.size,
+					new Set(tx.map((s) => s.clientIdx)).size,
 					1,
-					"all queries must share one client",
+					"begin…commit must share one client",
 				);
-				const sqlTypes = commands.map((c) => c.sql.split(" ")[0]!);
-				assert.deepEqual(sqlTypes[0], "BEGIN");
-				assert.deepEqual(sqlTypes[sqlTypes.length - 1], "COMMIT");
 			} finally {
 				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-				(db as pg.Pool).connect = originalConnect as any;
-			}
-		},
-	},
-	{
-		name: "withTransaction: ROLLBACK on error",
-		async fn({ db }) {
-			const events: string[] = [];
-			const originalConnect = (db as pg.Pool).connect.bind(db);
-			(db as pg.Pool).connect = (async (...args: unknown[]) => {
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-				const client = await (originalConnect as any)(...args);
-				const origQuery = client.query.bind(client);
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-				(client as any).query = async (...args: unknown[]) => {
-					events.push(String(args[0]).trim().split(" ")[0]!);
-					// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-					return await (origQuery as any)(...args);
-				};
-				return client;
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-			}) as any;
-
-			try {
-				await assert.rejects(
-					() =>
-						withTransaction(db, async () => {
-							throw new Error("boom");
-						}),
-					{ message: /boom/ },
-				);
-				assert(events.includes("BEGIN"));
-				assert(events.includes("ROLLBACK"));
-				assert(!events.includes("COMMIT"));
-			} finally {
-				// biome-ignore lint/suspicious/noExplicitAny: deliberately untyped test double / invalid input
-				(db as pg.Pool).connect = originalConnect as any;
+				(db as any).connect = originalConnect;
+				await jobs.stop();
 			}
 		},
 	},
@@ -555,7 +546,7 @@ testsRunner([
 
 			// partial on purpose: _handleJobFailure only reads `db` and `tableNames`
 			const context = {
-				db,
+				db: toDriver(db),
 				tableNames: {
 					tableJobs: `${tablePrefix}__job`,
 					tableAttempts: `${tablePrefix}__job_attempt_log`,

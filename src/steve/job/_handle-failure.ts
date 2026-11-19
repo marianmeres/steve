@@ -1,5 +1,4 @@
 import { BACKOFF_STRATEGY, JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
-import { withTransaction } from "../utils/with-transaction.ts";
 import { _logAttemptError } from "./_log-attempt.ts";
 
 /** Cap exponential backoff at 1 hour so high `max_attempts` don't produce absurd delays. */
@@ -27,12 +26,12 @@ export async function _handleJobFailure(
 	const errStack =
 		error instanceof Error && error.stack ? { stack: error.stack } : null;
 
-	return await withTransaction(db, async (client) => {
-		await _logAttemptError(client, tableAttempts, attemptId, errMessage, errStack);
+	return await db.transaction(async (tx) => {
+		await _logAttemptError(tx, tableAttempts, attemptId, errMessage, errStack);
 
 		// max attempts reached - mark as failed
 		if (job.attempts >= job.max_attempts) {
-			const { rows } = await client.query(
+			const { rows } = await tx.query<Job>(
 				`UPDATE ${tableJobs}
 				SET status = '${JOB_STATUS.FAILED}',
 					completed_at = NOW(),
@@ -43,7 +42,7 @@ export async function _handleJobFailure(
 				RETURNING *`,
 				[job.id, job.attempts],
 			);
-			return (rows[0] as Job | undefined) ?? null;
+			return rows[0] ?? null;
 		}
 
 		// schedule retry with potential backoff
@@ -63,7 +62,7 @@ export async function _handleJobFailure(
 			backoffMs = Math.min(2 ** job.attempts * 1000, MAX_BACKOFF_MS);
 		}
 
-		const { rows } = await client.query(
+		const { rows } = await tx.query<Job>(
 			`UPDATE ${tableJobs}
 			SET status = '${JOB_STATUS.PENDING}',
 				run_at = NOW() + ($1::bigint || ' milliseconds')::interval,
@@ -74,6 +73,6 @@ export async function _handleJobFailure(
 			RETURNING *`,
 			[backoffMs, job.id, job.attempts],
 		);
-		return (rows[0] as Job | undefined) ?? null;
+		return rows[0] ?? null;
 	});
 }

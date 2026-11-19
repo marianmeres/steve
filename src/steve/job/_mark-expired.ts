@@ -36,7 +36,7 @@ export async function _markExpired(
 		tenantPredicate = `AND tenant_id = ANY($${params.length}::varchar[])`;
 	}
 
-	const { rows } = await db.query(
+	const { rows } = await db.query<Job>(
 		`UPDATE ${tableJobs}
 		SET status = '${JOB_STATUS.EXPIRED}',
 			updated_at = NOW(),
@@ -48,5 +48,5 @@ export async function _markExpired(
 		params,
 	);
 
-	return rows as Job[];
+	return rows;
 }

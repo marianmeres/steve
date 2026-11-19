@@ -3,7 +3,8 @@
 ## Quick Reference
 
 - **Stack**: TypeScript (erasable-only), Node LTS (`.node-version`), pnpm, `node:test`,
-  Biome; PostgreSQL via the `pg` driver
+  Biome; PostgreSQL through a `@marianmeres/sqlkit` `Driver` (the host passes a `pg.Pool`,
+  a `pg.Client` or a `Driver`)
 - **Install**: `pnpm install` | **Test**: `pnpm test` | **Check all**: `pnpm run ci` |
   **Build**: `pnpm run build` | **Example**: `pnpm run example`
 - **Distribution**: npm only, `dist/` (ESM + `.d.ts`). 3.1.2 is the last version on JSR;
@@ -45,14 +46,14 @@ src/
     │   ├── _handle-success.ts  # Transactional success finalization (fenced on status+attempts)
     │   ├── _handle-failure.ts  # Transactional failure finalization (backoff cap; fenced)
     │   ├── _find.ts        # Job querying (sinceMinutesAgo parameterized; non-UUID uid => not found)
-    │   ├── _log-attempt.ts # Attempt logging (accepts client-or-pool)
+    │   ├── _log-attempt.ts # Attempt logging (writers take a `Driver`: pass `tx` inside a transaction)
     │   ├── _mark-expired.ts  # Reaper on updated_at (current attempt); returns affected rows
     │   ├── _purge.ts       # Retention: DELETE old terminal jobs (attempt log cascades)
     │   └── _health-preview.ts
     └── utils/
+        ├── driver.ts           # toDriver(db): pg.Pool / pg.Client / Driver → one sqlkit Driver
         ├── with-db-retry.ts    # Retry with exponential backoff
         ├── db-health.ts        # Health checking/monitoring
-        ├── with-transaction.ts # Acquires a dedicated client for BEGIN/COMMIT/ROLLBACK
         ├── sleep.ts            # Promise-based delay
         ├── pg-quote.ts         # SQL escaping (limited; status-filter only)
         └── with-timeout.ts     # AbortSignal-aware timeout wrapper
@@ -61,7 +62,9 @@ src/
 ## Before Making Changes
 
 - [ ] Check existing patterns in `src/steve/job/` for job operations
-- [ ] Transactional writes MUST go through `withTransaction` — never `pool.query("BEGIN")` (each pool.query can grab a different connection)
+- [ ] Transactional writes MUST go through `context.db.transaction(async (tx) => …)` — never a bare `begin` statement (on a pool each statement can take a different connection)
+- [ ] `db.query` runs exactly ONE statement; a script of several (the schema) goes through `db.exec`
+- [ ] Never call `close()` on the driver: it would end the host's pool or client
 - [ ] Finalization UPDATEs (`_handle-success.ts`, `_handle-failure.ts`) MUST stay fenced on `status = 'running' AND attempts = $n` — a `null` return means "someone else finalized it; leave it alone"
 - [ ] In `_execute.ts` the try/catch covers the handler call ONLY; never put finalization or consumer callbacks inside it
 - [ ] Consumer callbacks are invoked ONLY via `_events.ts` (`_safeInvoke`) or `#onEvent` — never call a user callback bare
@@ -92,7 +95,7 @@ From `src/index.ts`:
 - `JobCreateDTO` - DTO extending JobCreateOptions with type and payload
 - `JobsOptions` - Jobs constructor options (`autoCleanup?` added)
 - `AutoCleanupOptions` - Reaper configuration
-- `JobContext` - Internal context (exported but internal use; now exposes `withRetry`)
+- `JobContext` - Internal context (exported but internal use; exposes `withRetry`; `db` is a sqlkit `Driver`)
 - `HealthPreviewRow` - Row returned by health preview query
 - `DbRetryOptions` - Retry configuration
 - `DbHealthStatus` - Health check result
@@ -112,13 +115,16 @@ From `src/index.ts`:
 ## Database Schema
 
 Two tables are created (with configurable prefix). The schema is self-managed and
-idempotent: `_schemaCreate` is re-run inside `withTransaction` on the first init of every
-process (no migration ledger), serialized across processes by a transaction-scoped
-`pg_advisory_xact_lock` (so N replicas booting on a fresh DB cannot race the
-`CREATE ... IF NOT EXISTS` statements). In-process, concurrent first calls share one
-`#initPromise`. Most of it is `CREATE TABLE IF NOT EXISTS`, so **breaking column changes
-still require manual migration** — the ONE exception is the additive `tenant_id` column,
-which self-heals onto already-deployed tables. The self-heal is a `DO` block that checks
+idempotent: `_schemaCreate` is re-run inside `context.db.transaction` (as one `exec`
+script) on the first init of every process (no migration ledger), serialized across
+processes by a transaction-scoped `pg_advisory_xact_lock(hashtext($1))` (so N replicas
+booting on a fresh DB cannot race the `CREATE ... IF NOT EXISTS` statements). That lock
+stays this statement, NOT sqlkit's `exclusive()`, which keys its lock differently: replicas
+of different steve versions booting together must still wait for each other. In-process,
+concurrent first calls share one `#initPromise`. Most of it is `CREATE TABLE IF NOT
+EXISTS`, so **breaking column changes still require manual migration** — the ONE
+exception is the additive `tenant_id` column, which self-heals onto already-deployed
+tables. The self-heal is a `DO` block that checks
 `pg_attribute` first and only then runs `ALTER TABLE ... ADD COLUMN` — NOT a bare
 `ADD COLUMN IF NOT EXISTS`, because `ALTER TABLE` takes an ACCESS EXCLUSIVE lock before it
 evaluates `IF NOT EXISTS`, which on every boot would queue behind any open reader and stall
@@ -177,11 +183,14 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 - `_handleJobSuccess` / `_handleJobFailure` UPDATE `WHERE id = $1 AND status = 'running' AND attempts = $n` and return `Job | null`. `null` = somebody else finalized the row meanwhile (reaper → `expired`): the attempt log row is still written, a warning is logged, no events are published, the terminal state stays
 - Consequence: `expired` is truly terminal; a late handler never resurrects a job and `onDone` fires at most once per terminal transition
 
-### Transactions
+### Driver & Transactions
 
-- `_handleJobSuccess`, `_handleJobFailure`, `_initialize`, `_uninstall` all use `withTransaction()`
-- `withTransaction` acquires a dedicated pool client, runs BEGIN + work + COMMIT on that client, and ROLLBACK on error
-- **Never use `pool.query("BEGIN")`** for transactional code — pool.query can acquire a different connection per call
+- The constructor turns `db` into a sqlkit `Driver` with `toDriver(db)` (`utils/driver.ts`): a host's `Driver` is used as is (one whose dialect is not `pg` is a `TypeError`); a `pg.Pool` / `pg.Client` gets ONE driver per object, cached in a `WeakMap` (building one adds an `error` listener to the pool, and `checkDbHealth(pool)` may run on a timer). An invalid `db` throws in the constructor
+- steve imports nothing from `pg`: `SteveDb` is declared with sqlkit's structural types (`PgPoolLike | PgStandaloneClientLike | Driver`)
+- `_handleJobSuccess`, `_handleJobFailure`, `_initialize`, `_uninstall` all use `context.db.transaction(async (tx) => …)`. The driver pins one connection for the transaction, checks that the `COMMIT` committed, and destroys a connection whose `ROLLBACK` failed. Inside the callback `tx` and `db` are the same object (the async context decides the transaction); pass `tx` anyway
+- **Never send `begin` / `commit` yourself** — on a pool each statement can take a different connection
+- A failed statement rejects with a sqlkit `SqlError` (node-postgres's `code` and `message`, the original error as `cause`), not a raw `pg` error
+- Rows come back as `Record<string, unknown>`: type the call (`db.query<Job>(…)`) where a row is read
 
 ### Retry Logic
 
@@ -221,7 +230,7 @@ PENDING → RUNNING → COMPLETED
 ### Graceful Shutdown
 
 - `start()` is idempotent (second call is a no-op with a warning) and THROWS on init failure
-- `start(n > 1)` THROWS when `db` is a `pg.Client`: concurrent `withTransaction` calls on one connection interleave BEGIN/COMMIT/ROLLBACK (verified: one caller's ROLLBACK discards the other's uncommitted writes). Pool for concurrency
+- `start(n > 1)` THROWS when `db` is a single connection (the driver's `capabilities.concurrentWriters` is false: a `pg.Client`, or a host `Driver` over one connection). Pool for concurrency
 - SIGTERM handler is added on `start()` and removed on `stop()` (no listener leak across instances)
 - After the SIGTERM-triggered `stop()` resolves, the handler re-raises `SIGTERM` via `process.kill(process.pid, "SIGTERM")` IF `process.listenerCount("SIGTERM") === 0`. Reason: any installed listener suppresses the runtime's default terminate-on-SIGTERM, so without this the process idles until SIGKILL. Consumers with their own listener own the exit
 - `stop()` awaits currently-running jobs (and an in-flight auto-cleanup tick) before returning
@@ -247,11 +256,12 @@ PENDING → RUNNING → COMPLETED
 
 ## Dependencies
 
-- `pg` - PostgreSQL driver
+- `@marianmeres/sqlkit` - The `Driver` contract: transactions, typed `SqlError`s (steve's `toDriver` builds one over a pool or client)
 - `@marianmeres/clog` - Logger
 - `@marianmeres/pubsub` - Event system
 - `@marianmeres/data-to-sql-params` - SQL parameter builder
 - `@marianmeres/parse-boolean` - Used for `asc` flag coercion
+- `pg`, `@types/pg` - dev only (tests, example): the library never imports `pg`; a host that builds a pool brings its own
 
 ## Runtime & Tooling Conventions
 
@@ -296,6 +306,7 @@ TEST_PG_PORT=5432
 Test files:
 - `tests/jobs.test.ts` — core Jobs class behavior
 - `tests/db-resilience.test.ts` — retry and health monitor
+- `tests/driver.test.ts` — the driver seam (a host-built `Driver` runs a job, a non-`pg` driver is refused, one driver per pool)
 - `tests/fixes.test.ts` — regression guards for v2.0.0 fixes (transactions, injection, event isolation, lifecycle, reaper, AbortSignal, backoff cap, etc.)
 - `tests/tenant.test.ts` — optional `tenant_id` (tag/default-null, fetchAll/find/healthPreview/cleanup filters, tenant-blind claiming, and the `tenant_id` self-heal on a pre-tenant table)
 - `tests/fixes-v3.test.ts` — regression guards for the post-3.0 review fixes (reaper on `updated_at`, fenced finalization, per-uid callback isolation, prototype-safe dispatch, `pg.Client` single processor, init dedupe / no boot-time exclusive lock, `purge`, `find` not-found, `unsubscribeAll`, SIGTERM re-raise via subprocess `tests/_sigterm-child.ts`)
@@ -365,15 +376,15 @@ const jobs = new Jobs({
 
 ## File Locations
 
-| Purpose             | Path                                                                                                                         |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Main entry          | `src/index.ts`                                                                                                               |
-| Jobs class          | `src/steve/jobs.ts`                                                                                                          |
-| Retry utility       | `src/steve/utils/with-db-retry.ts`                                                                                           |
-| Transaction utility | `src/steve/utils/with-transaction.ts`                                                                                        |
-| Health utility      | `src/steve/utils/db-health.ts`                                                                                               |
-| Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                            |
-| Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
-| Example server      | `example/server.ts`                                                                                                          |
-| Config              | `package.json`, `tsconfig.json`, `biome.json`                                                                                |
-| CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                     |
+| Purpose             | Path                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main entry          | `src/index.ts`                                                                                                                                       |
+| Jobs class          | `src/steve/jobs.ts`                                                                                                                                  |
+| Retry utility       | `src/steve/utils/with-db-retry.ts`                                                                                                                   |
+| Driver seam         | `src/steve/utils/driver.ts`                                                                                                                          |
+| Health utility      | `src/steve/utils/db-health.ts`                                                                                                                       |
+| Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                                                    |
+| Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/driver.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts` |
+| Example server      | `example/server.ts`                                                                                                                                  |
+| Config              | `package.json`, `tsconfig.json`, `biome.json`                                                                                                        |
+| CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                                             |

@@ -40,7 +40,7 @@ export async function _create(
 	});
 
 	const sql = `INSERT INTO ${tableJobs} (${keys}) VALUES (${placeholders}) RETURNING *`;
-	const { rows } = await db.query(sql, values);
+	const { rows } = await db.query<Job>(sql, values);
 	const job = rows[0] as Job;
 
 	if (typeof onDone === "function") {

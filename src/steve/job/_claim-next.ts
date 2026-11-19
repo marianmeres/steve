@@ -1,4 +1,4 @@
-import { JOB_STATUS, type JobContext } from "../jobs.ts";
+import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 
 /**
  * Atomically marks the next pending, ready-to-run job as running and returns it.
@@ -9,11 +9,11 @@ import { JOB_STATUS, type JobContext } from "../jobs.ts";
  * - `started_at` uses `COALESCE` so it records the FIRST attempt start (retries don't
  *   reset it).
  */
-export async function _claimNextJob(context: JobContext) {
+export async function _claimNextJob(context: JobContext): Promise<Job | undefined> {
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
-	const result = await db.query(`
+	const result = await db.query<Job>(`
 		UPDATE ${tableJobs}
 		SET status = '${JOB_STATUS.RUNNING}',
 			started_at = COALESCE(started_at, NOW()),

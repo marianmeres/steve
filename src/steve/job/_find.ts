@@ -28,17 +28,18 @@ export async function _find(
 	if (typeof uid !== "string" || !UUID_RE.test(uid)) return undefined;
 
 	if (tenantId == null) {
-		const { rows } = await db.query(`SELECT * FROM ${tableJobs} WHERE uid = $1`, [
-			uid,
-		]);
-		return rows[0] as Job | undefined;
+		const { rows } = await db.query<Job>(
+			`SELECT * FROM ${tableJobs} WHERE uid = $1`,
+			[uid],
+		);
+		return rows[0];
 	}
 
-	const { rows } = await db.query(
+	const { rows } = await db.query<Job>(
 		`SELECT * FROM ${tableJobs} WHERE uid = $1 AND tenant_id = $2`,
 		[uid, tenantId],
 	);
-	return rows[0] as Job | undefined;
+	return rows[0];
 }
 
 /** Internal select all */
@@ -70,7 +71,7 @@ export async function _fetchAll(
 		LIMIT $2 OFFSET $3
 	`;
 
-	const { rows } = await db.query(sql, [since, limit, offset]);
+	const { rows } = await db.query<Job>(sql, [since, limit, offset]);
 
-	return rows as Job[];
+	return rows;
 }

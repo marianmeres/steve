@@ -23,7 +23,7 @@ export async function _healthPreview(
 		conditions.push(`tenant_id = ANY($${params.length}::varchar[])`);
 	}
 
-	const { rows } = await db.query(
+	const { rows } = await db.query<HealthPreviewRow>(
 		`SELECT
 			status,
 			COUNT(*) as count,
