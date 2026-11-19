@@ -41,8 +41,8 @@ import { Jobs } from "@marianmeres/steve";
 
 // the manager instance
 const jobs = new Jobs({
-    // pg.Pool (recommended), or pg.Client (then `start(1)` only — a single
-    // connection cannot run concurrent transactions)
+    // pg.Pool (recommended), or pg.Client: on a single connection every
+    // statement takes its turn, so handlers overlap but database work does not
     db,
     // global job handler for all jobs
     jobHandler: (job: Job, signal?: AbortSignal) => {
@@ -414,6 +414,7 @@ Behavioral fixes. Most code needs no change, but review these:
   or `onAttemptFor` is logged. Previously it was recorded as a handler failure and could
   re-run an already-completed job.
 - **`pg.Client` is limited to one processor.** `start(n > 1)` with a `pg.Client` throws.
+  4.0 lifts this limit.
 - **SIGTERM re-raise.** After the default handler has stopped processing, it re-raises
   `SIGTERM` when no other listener exists, so the process terminates instead of idling.
 - **`unsubscribeAll()` also clears per-job callbacks.**

@@ -1,8 +1,8 @@
 /**
  * Regression guards for the post-3.0 review fixes: reaper semantics, fenced
- * finalization, per-uid callback isolation, handler dispatch, pg.Client restriction,
- * init races and locking, purge, find() not-found, unsubscribeAll, SIGTERM lifecycle,
- * create() with an unscheduled run_at.
+ * finalization, per-uid callback isolation, handler dispatch, two processors on a
+ * pg.Client, init races and locking, purge, find() not-found, unsubscribeAll, SIGTERM
+ * lifecycle, create() with an unscheduled run_at.
  */
 
 import assert from "node:assert/strict";
@@ -356,9 +356,9 @@ testsRunner([
 	},
 
 	// ---------------------------------------------------------------
-	// pg.Client: one processor only
+	// pg.Client: more than one processor on one connection
 	{
-		name: "start(): a pg.Client is limited to a single processor",
+		name: "start(2) on a pg.Client: every job completes once, each with one success attempt",
 		async fn(_ctx) {
 			const client = createPgClient();
 			await client.connect();
@@ -368,23 +368,47 @@ testsRunner([
 				gracefulSigterm: false,
 				pollTimeoutMs,
 				tablePrefix: "_fixes_v3_client_",
-				jobHandler: () => ({ ok: true }),
+				jobHandler: async () => {
+					await sleep(5);
+					return { ok: true };
+				},
 			});
 			try {
 				await jobs.resetHard();
-				await assert.rejects(() => jobs.start(2), {
-					message: /single processor/,
-				});
+				await jobs.start(2);
+				assert.deepEqual(jobs.__debugDump().processorsCount, 2);
 
-				await jobs.start(1);
-				const j = await jobs.create("x", {}, { max_attempts: 1 });
-				await waitFor(
-					async () => (await statusOf(jobs, j.uid)) === JOB_STATUS.COMPLETED,
+				// Created while both processors run, so inserts, claims and
+				// finalizations all take their turns on the one connection.
+				const created = await Promise.all(
+					Array.from({ length: 20 }, () =>
+						jobs.create("x", {}, { max_attempts: 1 }),
+					),
 				);
-				assert.deepEqual(await statusOf(jobs, j.uid), JOB_STATUS.COMPLETED);
+				const uids = created.map((j) => j.uid);
+				await waitFor(
+					async () => {
+						for (const uid of uids) {
+							if ((await statusOf(jobs, uid)) !== JOB_STATUS.COMPLETED) {
+								return false;
+							}
+						}
+						return true;
+					},
+					{ timeoutMs: 10_000 },
+				);
 				await jobs.stop();
+
+				for (const uid of uids) {
+					const { job, attempts } = await jobs.find(uid, true);
+					assert.deepEqual(job?.status, JOB_STATUS.COMPLETED, uid);
+					assert.deepEqual(job?.result, { ok: true }, uid);
+					assert.deepEqual(attempts?.length, 1, uid);
+					assert.deepEqual(attempts?.[0]?.status, "success", uid);
+				}
 				await jobs.uninstall();
 			} finally {
+				await jobs.stop();
 				await client.end();
 			}
 		},

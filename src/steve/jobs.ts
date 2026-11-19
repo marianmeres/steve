@@ -689,11 +689,12 @@ export class Jobs {
 	 *
 	 * Throws if initialization fails (e.g., database unreachable) so callers can fail fast.
 	 *
-	 * Throws if `db` is a single connection (a `pg.Client`, or a `Driver` without
-	 * concurrent writers) and `processorsCount > 1`. Use a `pg.Pool` for concurrency.
+	 * Any `processorsCount` works on any `db`. On a single connection (a `pg.Client`, or
+	 * a `Driver` over one connection) every statement takes its turn, so handlers overlap
+	 * but database work does not. A `pg.Pool` is still the recommendation.
 	 *
 	 * @param processorsCount - Number of concurrent job processors (default: 2)
-	 * @throws If database initialization fails, or on an unsupported db/processors combination
+	 * @throws If database initialization fails
 	 *
 	 * @example
 	 * ```typescript
@@ -711,14 +712,6 @@ export class Jobs {
 			this.#logger?.warn?.(`Jobs.start() called while already running — ignored.`);
 			return;
 		}
-		if (!this.#db.capabilities.concurrentWriters && processorsCount > 1) {
-			const msg =
-				`A single connection supports a single processor only (requested ${processorsCount}). ` +
-				`Pass a pg.Pool for concurrency.`;
-			this.#logger?.error?.(msg);
-			throw new Error(msg);
-		}
-
 		await this.#initializeOnce();
 
 		// Start health monitor

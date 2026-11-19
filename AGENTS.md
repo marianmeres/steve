@@ -233,7 +233,7 @@ PENDING → RUNNING → COMPLETED
 ### Graceful Shutdown
 
 - `start()` is idempotent (second call is a no-op with a warning) and THROWS on init failure
-- `start(n > 1)` THROWS when `db` is a single connection (the driver's `capabilities.concurrentWriters` is false: a `pg.Client`, or a host `Driver` over one connection). Pool for concurrency
+- `start(n)` takes any `n` on any `db`. On a single connection (a `pg.Client`, or a host `Driver` over one connection) sqlkit gives each transaction its turn and a statement from outside an open transaction waits for it, so handlers overlap but database work does not. Do not branch on the adapter or `capabilities.concurrentWriters`. Pool still recommended
 - SIGTERM handler is added on `start()` and removed on `stop()` (no listener leak across instances)
 - After the SIGTERM-triggered `stop()` resolves, the handler re-raises `SIGTERM` via `process.kill(process.pid, "SIGTERM")` IF `process.listenerCount("SIGTERM") === 0`. Reason: any installed listener suppresses the runtime's default terminate-on-SIGTERM, so without this the process idles until SIGKILL. Consumers with their own listener own the exit
 - `stop()` awaits currently-running jobs (and an in-flight auto-cleanup tick) before returning
@@ -311,7 +311,7 @@ Test files:
 - `tests/driver.test.ts` — the driver seam (a host-built `Driver` runs a job, a non-`pg` driver is refused, one driver per pool)
 - `tests/fixes.test.ts` — regression guards for v2.0.0 fixes (transactions, injection, event isolation, lifecycle, reaper, AbortSignal, backoff cap, etc.)
 - `tests/tenant.test.ts` — optional `tenant_id` (tag/default-null, fetchAll/find/healthPreview/cleanup filters, tenant-blind claiming, and the `tenant_id` self-heal on a pre-tenant table)
-- `tests/fixes-v3.test.ts` — regression guards for the post-3.0 review fixes (reaper on `updated_at`, fenced finalization, per-uid callback isolation, prototype-safe dispatch, `pg.Client` single processor, init dedupe / no boot-time exclusive lock, `purge`, `find` not-found, `unsubscribeAll`, SIGTERM re-raise via subprocess `tests/_sigterm-child.ts`)
+- `tests/fixes-v3.test.ts` — regression guards for the post-3.0 review fixes (reaper on `updated_at`, fenced finalization, per-uid callback isolation, prototype-safe dispatch, `start(2)` on a `pg.Client`, init dedupe / no boot-time exclusive lock, `purge`, `find` not-found, `unsubscribeAll`, SIGTERM re-raise via subprocess `tests/_sigterm-child.ts`)
 
 ## Common Patterns
 

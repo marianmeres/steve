@@ -77,7 +77,7 @@ Starts job processing with the specified number of concurrent workers.
 
 **Behavior:**
 - **Throws** if initialization fails (e.g., database unreachable) so callers can fail fast.
-- **Throws** if `db` is a `pg.Client` and `processorsCount > 1` — a single connection cannot run concurrent transactions. Use a `pg.Pool` for concurrency.
+- **Any `processorsCount` works on any `db`.** On a single connection (a `pg.Client`) every statement takes its turn, so handlers overlap but database work does not. A `pg.Pool` is still the recommendation.
 - **Idempotent** — calling `start()` while already running is a no-op with a warning log; it will NOT spawn additional processors. To restart, call `stop()` first.
 
 **Example:**
@@ -528,7 +528,7 @@ Configuration options for the Jobs manager.
 
 ```typescript
 interface JobsOptions {
-  db: pg.Pool | pg.Client;       // PostgreSQL connection (required). pg.Client => start(1) only
+  db: pg.Pool | pg.Client;       // PostgreSQL connection (required). pg.Pool recommended
   jobHandler?: JobHandler;       // Global job handler
   jobHandlers?: JobHandlersMap;  // Map of handlers by type
   tablePrefix?: string;          // Table name prefix (e.g., "myschema.")
