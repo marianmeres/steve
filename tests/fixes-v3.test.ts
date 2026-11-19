@@ -1,7 +1,8 @@
 /**
  * Regression guards for the post-3.0 review fixes: reaper semantics, fenced
  * finalization, per-uid callback isolation, handler dispatch, pg.Client restriction,
- * init races and locking, purge, find() not-found, unsubscribeAll, SIGTERM lifecycle.
+ * init races and locking, purge, find() not-found, unsubscribeAll, SIGTERM lifecycle,
+ * create() with an unscheduled run_at.
  */
 
 import assert from "node:assert/strict";
@@ -67,6 +68,34 @@ async function waitFor(
 
 const statusOf = (jobs: Jobs, uid: string) =>
 	jobs.find(uid).then(({ job }) => job?.status);
+
+/**
+ * `run_at` given as something that means "not scheduled" (only an untyped caller can:
+ * a JSON body with `"run_at": null`) must leave the column default to apply, so the
+ * job reads back a Date and the claim picks it up.
+ */
+async function assertUnscheduledJobRuns(db: pg.Client | pg.Pool, run_at: unknown) {
+	const jobs = await _createJobs(db, { jobHandler: () => ({ ok: true }) });
+	try {
+		const created = await jobs.create(
+			"x",
+			{},
+			{ max_attempts: 1, run_at: run_at as Date },
+		);
+		assert(
+			created.run_at instanceof Date,
+			`run_at must read back a Date, got ${JSON.stringify(created.run_at)}`,
+		);
+		await jobs.start(1);
+		await waitFor(
+			async () => (await statusOf(jobs, created.uid)) === JOB_STATUS.COMPLETED,
+		);
+		assert.deepEqual(await statusOf(jobs, created.uid), JOB_STATUS.COMPLETED);
+	} finally {
+		await jobs.stop();
+		jobs.unsubscribeAll();
+	}
+}
 
 testsRunner([
 	// ---------------------------------------------------------------
@@ -517,6 +546,21 @@ testsRunner([
 				Object.keys(jobs.__debugDump().onAttemptCallbacks).length,
 				0,
 			);
+		},
+	},
+
+	// ---------------------------------------------------------------
+	// create(): run_at null / "" mean "not scheduled", never a NULL column
+	{
+		name: "create(): run_at: null leaves the column default to apply, and the job runs",
+		async fn({ db }) {
+			await assertUnscheduledJobRuns(db, null);
+		},
+	},
+	{
+		name: 'create(): run_at: "" leaves the column default to apply, and the job runs',
+		async fn({ db }) {
+			await assertUnscheduledJobRuns(db, "");
 		},
 	},
 

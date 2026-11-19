@@ -169,9 +169,6 @@ importers:
       '@marianmeres/clog':
         specifier: ^3.23.0
         version: 3.23.0
-      '@marianmeres/data-to-sql-params':
-        specifier: ^1.6.0
-        version: 1.6.0
       '@marianmeres/parse-boolean':
         specifier: ^2.1.0
         version: 2.1.0
@@ -279,9 +276,6 @@ packages:
     peerDependenciesMeta:
       '@marianmeres/batch':
         optional: true
-
-  '@marianmeres/data-to-sql-params@1.6.0':
-    resolution: {integrity: sha512-fi3a/UsSaejPpgSJaJr/0Tvac/cnEWENPgYkWYCMQ7UrsE3veow1ReSbkD5s21FZF5chnDlgQrcDGTPGsYFQsQ==}
 
   '@marianmeres/demino@2.0.0':
     resolution: {integrity: sha512-596nN9oCFdy64SbpPT3RYRvp3NoLMGkO6UlW5hGK9tBQit3mtS6n1DjMd92L1DtHLJJMZIsvLDlkl2T8kWzBFg==}
@@ -565,8 +559,6 @@ snapshots:
     optional: true
 
   '@marianmeres/clog@3.23.0': {}
-
-  '@marianmeres/data-to-sql-params@1.6.0': {}
 
   '@marianmeres/demino@2.0.0':
     dependencies:

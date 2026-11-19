@@ -1,4 +1,4 @@
-import { dataToSqlParams } from "@marianmeres/data-to-sql-params";
+import { insert, json, raw } from "@marianmeres/sqlkit";
 import type { Job, JobAwareFn, JobContext, JobCreateDTO } from "../jobs.ts";
 
 /** Coerce/validate `run_at` inputs; throws a clear error for invalid dates. */
@@ -25,22 +25,32 @@ export async function _create(
 		throw new TypeError(`'type' is required and must be a non-empty string`);
 	}
 
-	const { keys, values, placeholders } = dataToSqlParams(data, {
-		type: true,
-		payload: true,
-		max_attempts: true,
-		backoff_strategy: true,
-		max_attempt_duration_ms: true,
-		run_at: (v: unknown) => normalizeRunAt(v),
-		// Returning `undefined` makes dataToSqlParams OMIT the column entirely, so a
-		// no-tenant INSERT is byte-identical to pre-tenant_id steve (DB applies NULL).
-		// A provided value is clamped to the VARCHAR(255) width.
-		tenant_id: (v: unknown) =>
-			v == null || v === "" ? undefined : `${v}`.slice(0, 255),
-	});
+	const runAt = normalizeRunAt(data.run_at); // throws on an invalid date
 
-	const sql = `INSERT INTO ${tableJobs} (${keys}) VALUES (${placeholders}) RETURNING *`;
-	const { rows } = await db.query<Job>(sql, values);
+	// A key whose value is `undefined` is left out of the INSERT, so its column
+	// default applies.
+	const row = {
+		type: data.type,
+		// `json()` is `JSON.stringify`, as node-postgres did; a bare class instance
+		// would be refused by the driver's parameter rule.
+		payload: data.payload === undefined ? undefined : json(data.payload),
+		max_attempts: data.max_attempts,
+		backoff_strategy: data.backoff_strategy,
+		max_attempt_duration_ms: data.max_attempt_duration_ms,
+		// null and "" mean "not scheduled": left out, so the column default (NOW())
+		// applies. Binding NULL would leave a job the claim never picks up.
+		run_at: runAt ?? undefined,
+		// No tenant: left out, so the column is NULL. A provided value is clamped to
+		// the VARCHAR(255) width.
+		tenant_id:
+			data.tenant_id == null || data.tenant_id === ""
+				? undefined
+				: `${data.tenant_id}`.slice(0, 255),
+	};
+
+	// The table goes in as `raw()`: a prefix may be a schema ("app.") and an unquoted
+	// name folds to lower case, which `ident()` or a plain string would change.
+	const { rows } = await db.query<Job>(insert(raw(tableJobs), row, { returning: "*" }));
 	const job = rows[0] as Job;
 
 	if (typeof onDone === "function") {

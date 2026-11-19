@@ -64,7 +64,6 @@
   },
   "dependencies": {
     "@marianmeres/clog": "^3.23.0",
-    "@marianmeres/data-to-sql-params": "^1.6.0",
     "@marianmeres/parse-boolean": "^2.1.0",
     "@marianmeres/pubsub": "^3.0.0",
     "@marianmeres/sqlkit": "^0.1.1"

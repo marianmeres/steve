@@ -247,7 +247,7 @@ PENDING → RUNNING → COMPLETED
 
 - **Optional, audit-only, no FK.** `tenant_id` is a nullable `VARCHAR(255)` tag on `__job` only (NOT on the attempt-log table — reachable via `job_id`). It follows the ecosystem `tenant_id` convention but deliberately omits the `tenantIdFk`/registry coupling: a job queue is infrastructure, and `ON DELETE CASCADE` would destroy the very audit trail the column exists for.
 - **NULL = global/un-scoped**, chosen over a `NOT NULL DEFAULT 'default'` sentinel so infra jobs are represented honestly and the self-heal `ALTER` stays metadata-only.
-- **Write path:** `create(type, payload, { tenant_id })`. In `_create.ts` the allowlist transformer returns `undefined` for empty/null, so `dataToSqlParams` OMITS the column and a no-tenant INSERT is byte-identical to pre-tenant steve (DB applies NULL). `Jobs.create` forwards `tenant_id` into the DTO unconditionally (undefined when absent — same convention as `run_at`).
+- **Write path:** `create(type, payload, { tenant_id })`. `_create.ts` builds the INSERT with sqlkit's `insert(raw(tableJobs), row, { returning: "*" })`; a row key whose value is `undefined` is left out of the statement. An empty/null `tenant_id` becomes `undefined`, so a no-tenant INSERT names no `tenant_id` column (DB applies NULL); a provided one is clamped to 255 chars. `run_at` follows the same rule: `null` and `""` mean "not scheduled" and are left out, so the column default `NOW()` applies (binding NULL would store a job the claim's `run_at <= NOW()` never picks up). `Jobs.create` forwards `tenant_id` into the DTO unconditionally (undefined when absent — same convention as `run_at`).
 - **Read/maintenance filters** are all OPTIONAL and default to today's behavior: `fetchAll(status, { tenant_id })` (interpolated via `pgQuoteValue`, same trust model as the status filter), `find(uid, withAttempts, { tenant_id })` (guard; mismatch → not-found), `healthPreview(mins, { tenant_id })` and `cleanup(mins, { tenant_id })` (both **bind** the tenant values via `= ANY($n::varchar[])`, never interpolate).
 - **Claiming is tenant-blind by design.** `_claim-next.ts` is UNCHANGED (zero bound params); a worker pool drains all tenants incl. global NULL jobs. Per-tenant worker pools, cross-tenant fairness, and `claimTenantIds` were intentionally left out of scope.
 - **`autoCleanup` is always tenant-blind** (the scheduled reaper calls `cleanup()` with no tenant). Scoped reaping is manual-only.
@@ -256,10 +256,9 @@ PENDING → RUNNING → COMPLETED
 
 ## Dependencies
 
-- `@marianmeres/sqlkit` - The `Driver` contract: transactions, typed `SqlError`s (steve's `toDriver` builds one over a pool or client)
+- `@marianmeres/sqlkit` - The `Driver` contract: transactions, typed `SqlError`s (steve's `toDriver` builds one over a pool or client); the `insert()` builder for `create`
 - `@marianmeres/clog` - Logger
 - `@marianmeres/pubsub` - Event system
-- `@marianmeres/data-to-sql-params` - SQL parameter builder
 - `@marianmeres/parse-boolean` - Used for `asc` flag coercion
 - `pg`, `@types/pg` - dev only (tests, example): the library never imports `pg`; a host that builds a pool brings its own
 
