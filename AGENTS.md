@@ -52,7 +52,7 @@ src/
     │   └── _health-preview.ts
     └── utils/
         ├── driver.ts           # toDriver(db): pg.Pool / pg.Client / Driver → one sqlkit Driver
-        ├── with-db-retry.ts    # Retry with exponential backoff
+        ├── with-db-retry.ts    # withDbRetry: sqlkit's withRetry, classified by classifyPg
         ├── db-health.ts        # Health checking/monitoring
         ├── sleep.ts            # Promise-based delay
         └── with-timeout.ts     # AbortSignal-aware timeout wrapper
@@ -87,7 +87,7 @@ From `src/index.ts`:
 
 ### Functions
 
-- `withDbRetry<T>(fn, options?)` - Wraps async function with retry logic
+- `withDbRetry<T>(fn, options?)` - Wraps async function with retry logic: retries what sqlkit's `classifyPg` calls retryable (a lost or refused connection: Node's socket codes, class `08`, `57P01`–`57P03`, `53300`, the pool's connect timeout; a deadlock, a serialization failure, `55P03`); a caller's `retryableErrors` replaces that with exactly its list (the code, or the code in the message). An option of the wrong type or range is a `TypeError`
 - `checkDbHealth(db, logger?)` - One-time database health check
 
 ### Interfaces
@@ -200,7 +200,7 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 - Default: 3 attempts with exponential backoff
 - Formula: `min(2^attempts × 1000ms, 1 hour)` (capped)
 - Configurable via `max_attempts` and `backoff_strategy`
-- `dbRetry` option wraps every DB call (claim, create, find, handlers, cleanup) with transient-error retry
+- `dbRetry` option wraps every DB call (claim, create, find, handlers, cleanup) with transient-error retry. A retry runs the whole function again: wrap one statement or one whole `transaction` call, never a part of a transaction
 
 ### Timeouts & AbortSignal
 

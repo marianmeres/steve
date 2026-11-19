@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type pg from "pg";
-import { Jobs, type JobsOptions } from "../src/index.ts";
+import { type Job, Jobs, type JobsOptions } from "../src/index.ts";
 import { checkDbHealth } from "../src/steve/utils/db-health.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { withDbRetry } from "../src/steve/utils/with-db-retry.ts";
@@ -112,6 +112,91 @@ testsRunner([
 		},
 	},
 	{
+		name: "withDbRetry: retries a deadlock by default, not a unique violation",
+		async fn() {
+			let deadlocks = 0;
+			const result = await withDbRetry(
+				async () => {
+					deadlocks++;
+					if (deadlocks < 3) {
+						throw Object.assign(new Error("deadlock detected"), {
+							code: "40P01",
+						});
+					}
+					return "success";
+				},
+				{ maxRetries: 5, initialDelayMs: 10 },
+			);
+			assert.deepEqual(result, "success");
+			assert.deepEqual(deadlocks, 3);
+
+			let duplicates = 0;
+			await assert.rejects(
+				withDbRetry(
+					async () => {
+						duplicates++;
+						throw Object.assign(new Error("duplicate key value"), {
+							code: "23505",
+						});
+					},
+					{ maxRetries: 5, initialDelayMs: 10 },
+				),
+				{ message: "duplicate key value", code: "23505" },
+			);
+			assert.deepEqual(duplicates, 1); // no retries
+		},
+	},
+	{
+		name: "withDbRetry: a retryableErrors list replaces the default",
+		async fn() {
+			const options = {
+				maxRetries: 5,
+				initialDelayMs: 10,
+				retryableErrors: ["XX000"],
+			};
+
+			let listed = 0;
+			const result = await withDbRetry(async () => {
+				listed++;
+				if (listed < 3) {
+					throw Object.assign(new Error("internal error"), { code: "XX000" });
+				}
+				return "success";
+			}, options);
+			assert.deepEqual(result, "success");
+			assert.deepEqual(listed, 3);
+
+			let refused = 0;
+			await assert.rejects(
+				withDbRetry(async () => {
+					refused++;
+					throw Object.assign(new Error("Connection failed"), {
+						code: "ECONNREFUSED",
+					});
+				}, options),
+				{ message: "Connection failed", code: "ECONNREFUSED" },
+			);
+			assert.deepEqual(refused, 1); // not on the list: no retries
+		},
+	},
+	{
+		name: "withDbRetry: an out-of-range option is a TypeError",
+		async fn() {
+			let calls = 0;
+			await assert.rejects(
+				withDbRetry(
+					async () => {
+						calls++;
+						return "success";
+					},
+					{ backoffMultiplier: 0.5 },
+				),
+				TypeError,
+			);
+			assert.deepEqual(calls, 0); // refused before the first call
+		},
+	},
+	{
 		name: "checkDbHealth: returns healthy status",
 		async fn({ db }) {
 			const status = await checkDbHealth(db);
@@ -141,6 +226,44 @@ testsRunner([
 			assert.deepEqual(found.job!.status, "completed");
 
 			await jobs.stop();
+		},
+	},
+	{
+		name: "Jobs with dbRetry: a refused connection is retried",
+		async fn({ db }) {
+			const jobs = await _createJobs(db, {
+				dbRetry: { initialDelayMs: 10 },
+			});
+
+			// The pool refuses the next two connections, then works again.
+			const pool = db as pg.Pool;
+			const connect = pool.connect;
+			const reconnect = connect.bind(pool) as () => Promise<pg.PoolClient>;
+			let calls = 0;
+			pool.connect = (async () => {
+				calls++;
+				if (calls <= 2) {
+					throw Object.assign(
+						new Error("connect ECONNREFUSED 127.0.0.1:5432"),
+						{
+							code: "ECONNREFUSED",
+						},
+					);
+				}
+				return await reconnect();
+			}) as typeof pool.connect;
+
+			let job: Job;
+			try {
+				job = await jobs.create("test", { foo: "bar" });
+			} finally {
+				pool.connect = connect;
+			}
+			assert.deepEqual(calls, 3);
+
+			const found = await jobs.find(job.uid);
+			assert.deepEqual(found.job?.type, "test");
+			assert.deepEqual(found.job?.payload, { foo: "bar" });
 		},
 	},
 	{
