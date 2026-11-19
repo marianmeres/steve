@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import type { Driver } from "@marianmeres/sqlkit";
 import type pg from "pg";
 import { type Job, Jobs, type JobsOptions } from "../src/index.ts";
-import { checkDbHealth } from "../src/steve/utils/db-health.ts";
+import {
+	checkDbHealth,
+	DbHealthMonitor,
+	type DbHealthStatus,
+} from "../src/steve/utils/db-health.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { withDbRetry } from "../src/steve/utils/with-db-retry.ts";
 import { testsRunner } from "./_tests-runner.ts";
@@ -21,6 +26,35 @@ async function _createJobs(db: pg.Client | pg.Pool, options: Partial<JobsOptions
 
 	await jobs.resetHard();
 	return jobs;
+}
+
+/**
+ * A `pg` driver for the health check alone: its `select 1` answers as `answer` does,
+ * and `SELECT version()` answers at once.
+ */
+function stubDriver(answer: () => Promise<unknown>): Driver {
+	const unused = () => Promise.reject(new Error("not used by a health check"));
+	const query = async (text: unknown) => {
+		if (/version\(\)/i.test(String(text))) {
+			return { rows: [{ version: "PostgreSQL 18.6 on stub" }], rowCount: 1 };
+		}
+		await answer();
+		return { rows: [{ "?column?": 1 }], rowCount: 1 };
+	};
+	return {
+		dialect: "pg",
+		adapter: "stub",
+		capabilities: {
+			sync: false,
+			concurrentWriters: true,
+			crossProcessLock: true,
+		},
+		query: query as Driver["query"],
+		exec: unused,
+		transaction: unused,
+		exclusive: unused,
+		close: async () => {},
+	};
 }
 
 testsRunner([
@@ -208,6 +242,60 @@ testsRunner([
 			assert(status.timestamp instanceof Date);
 			assert(status.pgVersion); // should have version
 		},
+	},
+	{
+		name: "checkDbHealth: a check that never answers is unhealthy at the timeout",
+		async fn() {
+			const db = stubDriver(() => new Promise(() => {}));
+			const status = await checkDbHealth(db, undefined, { timeoutMs: 50 });
+
+			assert.deepEqual(status.healthy, false);
+			assert.deepEqual(status.latencyMs, null);
+			assert.match(status.error ?? "", /timed out/);
+			assert.deepEqual(status.pgVersion, undefined);
+		},
+		raw: true,
+	},
+	{
+		name: "DbHealthMonitor: refused twice, then answering: onUnhealthy once, then onHealthy once",
+		async fn() {
+			let checks = 0;
+			const db = stubDriver(async () => {
+				checks++;
+				if (checks <= 2) {
+					throw Object.assign(
+						new Error("connect ECONNREFUSED 127.0.0.1:5432"),
+						{ code: "ECONNREFUSED" },
+					);
+				}
+			});
+			const unhealthy: DbHealthStatus[] = [];
+			const healthy: DbHealthStatus[] = [];
+			const monitor = new DbHealthMonitor(db, {
+				intervalMs: 10,
+				timeoutMs: 1000,
+				onUnhealthy: (status) => unhealthy.push(status),
+				onHealthy: (status) => healthy.push(status),
+			});
+
+			try {
+				await monitor.start();
+				assert.deepEqual(unhealthy.length, 1); // the first check
+				for (let i = 0; i < 100 && !healthy.length; i++) await sleep(10);
+			} finally {
+				monitor.stop();
+			}
+
+			assert(checks >= 3, `${checks} checks`);
+			assert.deepEqual(unhealthy.length, 1);
+			assert.deepEqual(healthy.length, 1);
+			assert.deepEqual(unhealthy[0]?.latencyMs, null);
+			assert.match(unhealthy[0]?.error ?? "", /ECONNREFUSED/);
+			assert.deepEqual(healthy[0]?.healthy, true);
+			// asked after the recovery, for the statuses that follow it
+			assert.deepEqual(monitor.getLastStatus()?.pgVersion, "18.6");
+		},
+		raw: true,
 	},
 	{
 		name: "Jobs with dbRetry enabled",

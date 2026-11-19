@@ -83,12 +83,12 @@ From `src/index.ts`:
 ### Classes
 
 - `Jobs` - Main job manager class
-- `DbHealthMonitor` - Periodic DB health monitor (re-exported)
+- `DbHealthMonitor` - Periodic DB health monitor (re-exported), on sqlkit's `createHealthMonitor`: `onUnhealthy` / `onHealthy` fire on a flip only (a healthy first check is no change), and it logs only on a flip (no per-check `warn`); the next check starts `intervalMs` after the previous one answered or timed out, its timers are unref'd. `intervalMs: 0` means the default (30 s); any other option out of range is a `TypeError` at construction
 
 ### Functions
 
 - `withDbRetry<T>(fn, options?)` - Wraps async function with retry logic: retries what sqlkit's `classifyPg` calls retryable (a lost or refused connection: Node's socket codes, class `08`, `57P01`–`57P03`, `53300`, the pool's connect timeout; a deadlock, a serialization failure, `55P03`); a caller's `retryableErrors` replaces that with exactly its list (the code, or the code in the message). An option of the wrong type or range is a `TypeError`
-- `checkDbHealth(db, logger?)` - One-time database health check
+- `checkDbHealth(db, logger?, { timeoutMs? })` - One-time database health check on sqlkit's `checkHealth`: a `select 1` raced against `timeoutMs` (5 s; unhealthy, with `latencyMs: null`, when it does not answer), then `pgVersion`, asked once per driver after a healthy check. `error` is the driver's message or the timeout's
 
 ### Interfaces
 
@@ -370,6 +370,7 @@ const jobs = new Jobs({
   dbRetry: true,
   dbHealthCheck: {
     intervalMs: 30000,
+    timeoutMs: 5000,   // a check not answered by then is unhealthy
     onUnhealthy: (status) => alert(status.error),
     onHealthy: () => clearAlert(),
   },

@@ -282,6 +282,8 @@ export interface JobsOptions {
 		| {
 				/** Health check interval in milliseconds (default: 30000) */
 				intervalMs?: number;
+				/** Milliseconds after which a check that has not answered is unhealthy, above 0 (default: 5000) */
+				timeoutMs?: number;
 				/** Callback when database becomes unhealthy */
 				onUnhealthy?: (status: DbHealthStatus) => void;
 				/** Callback when database recovers */
