@@ -78,6 +78,23 @@ testsRunner([
 		},
 	},
 	{
+		name: 'fetchAll binds the tenant: a tenant named "null" is a tenant like any other',
+		async fn({ db }) {
+			const jobs = await _createJobs(db);
+
+			const tagged = await jobs.create("x", {}, { tenant_id: "null" });
+			await jobs.create("x", {}); // global / un-scoped (SQL NULL)
+			await jobs.create("x", {}, { tenant_id: "acme" });
+
+			const found = await jobs.fetchAll(null, { tenant_id: "null" });
+			assert.deepEqual(
+				found.map((j) => j.uid),
+				[tagged.uid],
+			);
+			assert.deepEqual(found[0]?.tenant_id, "null");
+		},
+	},
+	{
 		name: "find tenant guard reports a mismatch as not-found",
 		async fn({ db }) {
 			const jobs = await _createJobs(db);

@@ -1,3 +1,4 @@
+import { raw, sql } from "@marianmeres/sqlkit";
 import { BACKOFF_STRATEGY, JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 import { _logAttemptError } from "./_log-attempt.ts";
 
@@ -32,15 +33,14 @@ export async function _handleJobFailure(
 		// max attempts reached - mark as failed
 		if (job.attempts >= job.max_attempts) {
 			const { rows } = await tx.query<Job>(
-				`UPDATE ${tableJobs}
-				SET status = '${JOB_STATUS.FAILED}',
+				sql`UPDATE ${raw(tableJobs)}
+				SET status = ${JOB_STATUS.FAILED},
 					completed_at = NOW(),
 					updated_at = NOW()
-				WHERE id = $1
-					AND status = '${JOB_STATUS.RUNNING}'
-					AND attempts = $2
+				WHERE id = ${job.id}
+					AND status = ${JOB_STATUS.RUNNING}
+					AND attempts = ${job.attempts}
 				RETURNING *`,
-				[job.id, job.attempts],
 			);
 			return rows[0] ?? null;
 		}
@@ -63,15 +63,14 @@ export async function _handleJobFailure(
 		}
 
 		const { rows } = await tx.query<Job>(
-			`UPDATE ${tableJobs}
-			SET status = '${JOB_STATUS.PENDING}',
-				run_at = NOW() + ($1::bigint || ' milliseconds')::interval,
+			sql`UPDATE ${raw(tableJobs)}
+			SET status = ${JOB_STATUS.PENDING},
+				run_at = NOW() + (${backoffMs}::bigint || ' milliseconds')::interval,
 				updated_at = NOW()
-			WHERE id = $2
-				AND status = '${JOB_STATUS.RUNNING}'
-				AND attempts = $3
+			WHERE id = ${job.id}
+				AND status = ${JOB_STATUS.RUNNING}
+				AND attempts = ${job.attempts}
 			RETURNING *`,
-			[backoffMs, job.id, job.attempts],
 		);
 		return rows[0] ?? null;
 	});

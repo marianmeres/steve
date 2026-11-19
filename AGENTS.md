@@ -55,7 +55,6 @@ src/
         ├── with-db-retry.ts    # Retry with exponential backoff
         ├── db-health.ts        # Health checking/monitoring
         ├── sleep.ts            # Promise-based delay
-        ├── pg-quote.ts         # SQL escaping (limited; status-filter only)
         └── with-timeout.ts     # AbortSignal-aware timeout wrapper
 ```
 
@@ -65,7 +64,11 @@ src/
 - [ ] Transactional writes MUST go through `context.db.transaction(async (tx) => …)` — never a bare `begin` statement (on a pool each statement can take a different connection)
 - [ ] `db.query` runs exactly ONE statement; a script of several (the schema) goes through `db.exec`
 - [ ] Never call `close()` on the driver: it would end the host's pool or client
-- [ ] Finalization UPDATEs (`_handle-success.ts`, `_handle-failure.ts`) MUST stay fenced on `status = 'running' AND attempts = $n` — a `null` return means "someone else finalized it; leave it alone"
+- [ ] Every statement with values is ONE sqlkit `sql` template; every value is bound, nothing is numbered by hand or escaped into the text. The table goes in as `raw(tableJobs)` / `raw(tableAttempts)` (never a string or `ident()`: a prefix may be a schema, and unquoted names fold to lower case). Only code-owned text goes through `raw()`
+- [ ] In a `sql` template a constant is interpolated bare (`status = ${JOB_STATUS.RUNNING}`): quotes around an interpolation (`'${…}'`) are a bug — they render a string literal holding `$1`
+- [ ] A list is `IN ${inList(list)}`, never an array parameter (`= ANY($n)`); `inList([])` throws, so test the length first. An optional filter is a fragment or `EMPTY`, combined with `and()` around one part that is always there
+- [ ] Bind a string that is already JSON as it is (`result = ${serialized}`); wrap a value in `json()` only when it is not yet serialized
+- [ ] Finalization UPDATEs (`_handle-success.ts`, `_handle-failure.ts`) MUST stay fenced on `status = 'running' AND attempts = <ours>` — a `null` return means "someone else finalized it; leave it alone"
 - [ ] In `_execute.ts` the try/catch covers the handler call ONLY; never put finalization or consumer callbacks inside it
 - [ ] Consumer callbacks are invoked ONLY via `_events.ts` (`_safeInvoke`) or `#onEvent` — never call a user callback bare
 - [ ] `job/_*.ts` modules are imported by `jobs.ts`: never read `JOB_STATUS` / `BACKOFF_STRATEGY` at module top level (circular-import TDZ) — only inside functions
@@ -180,7 +183,7 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 ### Execution & Finalization (`_execute.ts`)
 
 - `try/catch` wraps the handler call ONLY. Finalization and callback fan-out run outside it, so a consumer-callback error can never be misattributed to the job
-- `_handleJobSuccess` / `_handleJobFailure` UPDATE `WHERE id = $1 AND status = 'running' AND attempts = $n` and return `Job | null`. `null` = somebody else finalized the row meanwhile (reaper → `expired`): the attempt log row is still written, a warning is logged, no events are published, the terminal state stays
+- `_handleJobSuccess` / `_handleJobFailure` UPDATE `WHERE id = <job.id> AND status = 'running' AND attempts = <job.attempts>` and return `Job | null`. `null` = somebody else finalized the row meanwhile (reaper → `expired`): the attempt log row is still written, a warning is logged, no events are published, the terminal state stays
 - Consequence: `expired` is truly terminal; a late handler never resurrects a job and `onDone` fires at most once per terminal transition
 
 ### Driver & Transactions
@@ -248,8 +251,8 @@ PENDING → RUNNING → COMPLETED
 - **Optional, audit-only, no FK.** `tenant_id` is a nullable `VARCHAR(255)` tag on `__job` only (NOT on the attempt-log table — reachable via `job_id`). It follows the ecosystem `tenant_id` convention but deliberately omits the `tenantIdFk`/registry coupling: a job queue is infrastructure, and `ON DELETE CASCADE` would destroy the very audit trail the column exists for.
 - **NULL = global/un-scoped**, chosen over a `NOT NULL DEFAULT 'default'` sentinel so infra jobs are represented honestly and the self-heal `ALTER` stays metadata-only.
 - **Write path:** `create(type, payload, { tenant_id })`. `_create.ts` builds the INSERT with sqlkit's `insert(raw(tableJobs), row, { returning: "*" })`; a row key whose value is `undefined` is left out of the statement. An empty/null `tenant_id` becomes `undefined`, so a no-tenant INSERT names no `tenant_id` column (DB applies NULL); a provided one is clamped to 255 chars. `run_at` follows the same rule: `null` and `""` mean "not scheduled" and are left out, so the column default `NOW()` applies (binding NULL would store a job the claim's `run_at <= NOW()` never picks up). `Jobs.create` forwards `tenant_id` into the DTO unconditionally (undefined when absent — same convention as `run_at`).
-- **Read/maintenance filters** are all OPTIONAL and default to today's behavior: `fetchAll(status, { tenant_id })` (interpolated via `pgQuoteValue`, same trust model as the status filter), `find(uid, withAttempts, { tenant_id })` (guard; mismatch → not-found), `healthPreview(mins, { tenant_id })` and `cleanup(mins, { tenant_id })` (both **bind** the tenant values via `= ANY($n::varchar[])`, never interpolate).
-- **Claiming is tenant-blind by design.** `_claim-next.ts` is UNCHANGED (zero bound params); a worker pool drains all tenants incl. global NULL jobs. Per-tenant worker pools, cross-tenant fairness, and `claimTenantIds` were intentionally left out of scope.
+- **Read/maintenance filters** are all OPTIONAL and default to today's behavior: `fetchAll(status, { tenant_id })`, `find(uid, withAttempts, { tenant_id })` (guard; mismatch → not-found), `healthPreview(mins, { tenant_id })`, `cleanup(mins, { tenant_id })` and `purge(mins, { tenant_id })`. Every one **binds** its values, a list as `tenant_id IN ${inList(ids)}`; nothing is interpolated, so a tenant named `"null"` is a tenant like any other.
+- **Claiming is tenant-blind by design.** `_claim-next.ts` has no tenant predicate; a worker pool drains all tenants incl. global NULL jobs. Per-tenant worker pools, cross-tenant fairness, and `claimTenantIds` were intentionally left out of scope.
 - **`autoCleanup` is always tenant-blind** (the scheduled reaper calls `cleanup()` with no tenant). Scoped reaping is manual-only.
 - **Events are tenant-blind**: type-keyed `onDone`/`onAttempt` fire across ALL tenants — filter on `job.tenant_id` in the callback. `onDoneFor`/`create(onDone)` are uid-keyed and inherently tenant-safe.
 - `JobContext` did NOT change (no per-instance tenant state); `static __schema(prefix)` did NOT change (always emits the column + partial index unconditionally — zero cost when unused).

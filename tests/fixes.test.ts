@@ -105,7 +105,7 @@ testsRunner([
 				const is = (i: number, word: string) =>
 					statements[i]!.sql.toLowerCase() === word;
 				const update = statements.findIndex((s) =>
-					/SET status = 'completed'/i.test(s.sql),
+					/SET status = \$\d+,[\s\S]*result = \$\d+/i.test(s.sql),
 				);
 				assert(update > 0, "the finalization's UPDATE was recorded");
 				let begin = update;

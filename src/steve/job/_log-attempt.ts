@@ -1,4 +1,4 @@
-import type { Driver } from "@marianmeres/sqlkit";
+import { type Driver, json, raw, sql } from "@marianmeres/sqlkit";
 import { ATTEMPT_STATUS, type Job, type JobAttempt, type JobContext } from "../jobs.ts";
 
 /** Insert a new attempt row (status left NULL until the attempt completes). */
@@ -7,13 +7,12 @@ export async function _logAttemptStart(
 	tableAttempts: string,
 	job: Job,
 ): Promise<number> {
+	// `job.attempts` is 1-based post-claim (see _claim-next.ts), so it matches
+	// the sequential attempt_number we want to record here.
 	const { rows } = await db.query<{ id: number }>(
-		`INSERT INTO ${tableAttempts} (job_id, attempt_number)
-		VALUES ($1, $2)
+		sql`INSERT INTO ${raw(tableAttempts)} (job_id, attempt_number)
+		VALUES (${job.id}, ${job.attempts})
 		RETURNING id`,
-		// `job.attempts` is 1-based post-claim (see _claim-next.ts), so it matches
-		// the sequential attempt_number we want to record here.
-		[job.id, job.attempts],
 	);
 
 	// INSERT … RETURNING answers exactly one row.
@@ -27,11 +26,10 @@ export async function _logAttemptSuccess(
 	attemptId: number,
 ): Promise<void> {
 	await db.query(
-		`UPDATE ${tableAttempts}
-		SET status = '${ATTEMPT_STATUS.SUCCESS}',
+		sql`UPDATE ${raw(tableAttempts)}
+		SET status = ${ATTEMPT_STATUS.SUCCESS},
 			completed_at = NOW()
-		WHERE id = $1`,
-		[attemptId],
+		WHERE id = ${attemptId}`,
 	);
 }
 
@@ -43,14 +41,14 @@ export async function _logAttemptError(
 	errMessage: string,
 	errDetails: Record<string, string> | null,
 ): Promise<void> {
+	// `json(null)` binds SQL NULL, as before.
 	await db.query(
-		`UPDATE ${tableAttempts}
-		SET status = '${ATTEMPT_STATUS.ERROR}',
+		sql`UPDATE ${raw(tableAttempts)}
+		SET status = ${ATTEMPT_STATUS.ERROR},
 			completed_at = NOW(),
-			error_message = $1,
-			error_details = $2
-		WHERE id = $3`,
-		[errMessage, errDetails ? JSON.stringify(errDetails) : null, attemptId],
+			error_message = ${errMessage},
+			error_details = ${json(errDetails)}
+		WHERE id = ${attemptId}`,
 	);
 }
 
@@ -62,8 +60,7 @@ export async function _logAttemptFetchAll(
 	const { db, tableNames } = context;
 	const { tableAttempts } = tableNames;
 	const { rows } = await db.query<JobAttempt>(
-		`SELECT * FROM ${tableAttempts} WHERE job_id = $1 ORDER BY id asc`,
-		[jobId],
+		sql`SELECT * FROM ${raw(tableAttempts)} WHERE job_id = ${jobId} ORDER BY id asc`,
 	);
 
 	return rows;

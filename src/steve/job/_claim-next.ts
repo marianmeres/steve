@@ -1,3 +1,4 @@
+import { raw, sql } from "@marianmeres/sqlkit";
 import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 
 /**
@@ -13,15 +14,15 @@ export async function _claimNextJob(context: JobContext): Promise<Job | undefine
 	const { db, tableNames } = context;
 	const { tableJobs } = tableNames;
 
-	const result = await db.query<Job>(`
-		UPDATE ${tableJobs}
-		SET status = '${JOB_STATUS.RUNNING}',
+	const result = await db.query<Job>(sql`
+		UPDATE ${raw(tableJobs)}
+		SET status = ${JOB_STATUS.RUNNING},
 			started_at = COALESCE(started_at, NOW()),
 			updated_at = NOW(),
 			attempts = attempts + 1
 		WHERE id = (
-			SELECT id FROM ${tableJobs}
-			WHERE status = '${JOB_STATUS.PENDING}'
+			SELECT id FROM ${raw(tableJobs)}
+			WHERE status = ${JOB_STATUS.PENDING}
 			AND run_at <= NOW()
 			ORDER BY run_at, id
 			FOR UPDATE SKIP LOCKED -- Important!

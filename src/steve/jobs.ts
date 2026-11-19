@@ -18,7 +18,6 @@ import {
 	type DbHealthStatus,
 } from "./utils/db-health.ts";
 import { type SteveDb, toDriver } from "./utils/driver.ts";
-import { pgQuoteValue } from "./utils/pg-quote.ts";
 import { sleep } from "./utils/sleep.ts";
 import { type DbRetryOptions, withDbRetry } from "./utils/with-db-retry.ts";
 
@@ -910,26 +909,17 @@ export class Jobs {
 	): Promise<Job[]> {
 		await this.#initializeOnce();
 
-		// Both conjuncts are quoted via pgQuoteValue (escapes single quotes) and the
-		// `where` is built internally — same trust model as the status filter.
-		const conditions: string[] = [];
-
+		let statuses: Job["status"][] | null = null;
 		if (status) {
 			if (!Array.isArray(status)) status = [status];
-			status = [...new Set(status.filter(Boolean))];
-			if (status.length) {
-				conditions.push(`status IN (${status.map(pgQuoteValue).join(",")})`);
-			}
+			statuses = [...new Set(status.filter(Boolean))];
 		}
 
 		const tenantIds = normalizeTenantIds(options?.tenant_id);
-		if (tenantIds) {
-			conditions.push(`tenant_id IN (${tenantIds.map(pgQuoteValue).join(",")})`);
-		}
 
-		const where = conditions.length ? conditions.join(" AND ") : null;
-
-		return await this.#withRetry(() => _fetchAll(this.#context, where, options));
+		return await this.#withRetry(() =>
+			_fetchAll(this.#context, statuses, tenantIds, options),
+		);
 	}
 
 	/**

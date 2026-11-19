@@ -1,3 +1,4 @@
+import { EMPTY, inList, raw, sql } from "@marianmeres/sqlkit";
 import type { Job, JobContext } from "../jobs.ts";
 
 /**
@@ -44,19 +45,16 @@ export async function _purge(
 		);
 	}
 
-	const params: unknown[] = [num, wanted];
-	let tenantPredicate = "";
-	if (tenantIds?.length) {
-		params.push(tenantIds);
-		tenantPredicate = `AND tenant_id = ANY($${params.length}::varchar[])`;
-	}
+	const tenantPredicate = tenantIds?.length
+		? sql`AND tenant_id IN ${inList(tenantIds)}`
+		: EMPTY;
 
+	// `wanted` is non-empty (checked above), so `inList(wanted)` has something to list.
 	const { rowCount } = await db.query(
-		`DELETE FROM ${tableJobs}
-		WHERE status = ANY($2::varchar[])
-			AND COALESCE(completed_at, updated_at) < NOW() - ($1::bigint || ' minutes')::interval
+		sql`DELETE FROM ${raw(tableJobs)}
+		WHERE status IN ${inList(wanted)}
+			AND COALESCE(completed_at, updated_at) < NOW() - (${num}::bigint || ' minutes')::interval
 			${tenantPredicate}`,
-		params,
 	);
 
 	return rowCount;

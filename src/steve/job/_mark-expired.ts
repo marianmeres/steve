@@ -1,3 +1,4 @@
+import { EMPTY, inList, raw, sql } from "@marianmeres/sqlkit";
 import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 
 /**
@@ -29,23 +30,19 @@ export async function _markExpired(
 		? Math.max(0, Math.round(+maxAllowedRunDurationMinutes))
 		: 5;
 
-	const params: unknown[] = [num];
-	let tenantPredicate = "";
-	if (tenantIds?.length) {
-		params.push(tenantIds);
-		tenantPredicate = `AND tenant_id = ANY($${params.length}::varchar[])`;
-	}
+	const tenantPredicate = tenantIds?.length
+		? sql`AND tenant_id IN ${inList(tenantIds)}`
+		: EMPTY;
 
 	const { rows } = await db.query<Job>(
-		`UPDATE ${tableJobs}
-		SET status = '${JOB_STATUS.EXPIRED}',
+		sql`UPDATE ${raw(tableJobs)}
+		SET status = ${JOB_STATUS.EXPIRED},
 			updated_at = NOW(),
 			completed_at = NOW()
-		WHERE status = '${JOB_STATUS.RUNNING}'
-			AND updated_at < NOW() - ($1::bigint || ' minutes')::interval
+		WHERE status = ${JOB_STATUS.RUNNING}
+			AND updated_at < NOW() - (${num}::bigint || ' minutes')::interval
 			${tenantPredicate}
 		RETURNING *`,
-		params,
 	);
 
 	return rows;

@@ -1,3 +1,4 @@
+import { raw, sql } from "@marianmeres/sqlkit";
 import { JOB_STATUS, type Job, type JobContext } from "../jobs.ts";
 import { _logAttemptSuccess } from "./_log-attempt.ts";
 
@@ -29,17 +30,18 @@ export async function _handleJobSuccess(
 	}
 
 	return await db.transaction(async (tx) => {
+		// `serialized` is already JSON text: bound as it is, never through `json()`,
+		// which would store a JSON string holding JSON.
 		const { rows } = await tx.query<Job>(
-			`UPDATE ${tableJobs}
-			SET status = '${JOB_STATUS.COMPLETED}',
+			sql`UPDATE ${raw(tableJobs)}
+			SET status = ${JOB_STATUS.COMPLETED},
 				completed_at = NOW(),
 				updated_at = NOW(),
-				result = $1
-			WHERE id = $2
-				AND status = '${JOB_STATUS.RUNNING}'
-				AND attempts = $3
+				result = ${serialized}
+			WHERE id = ${job.id}
+				AND status = ${JOB_STATUS.RUNNING}
+				AND attempts = ${job.attempts}
 			RETURNING *`,
-			[serialized, job.id, job.attempts],
 		);
 
 		await _logAttemptSuccess(tx, tableAttempts, attemptId);

@@ -1,3 +1,4 @@
+import { and, EMPTY, inList, raw, sql } from "@marianmeres/sqlkit";
 import type { HealthPreviewRow, JobContext } from "../jobs.ts";
 
 /** Will collect some basic stats about the jobs since `sinceHours` */
@@ -14,24 +15,20 @@ export async function _healthPreview(
 		sinceMinutesAgo = 60;
 	}
 
-	// `sinceMinutesAgo` is a guarded integer (safe to interpolate); the tenant
-	// values are caller-supplied and MUST be bound, never interpolated.
-	const conditions = [`created_at > NOW() - INTERVAL '${sinceMinutesAgo} minute'`];
-	const params: unknown[] = [];
-	if (tenantIds?.length) {
-		params.push(tenantIds);
-		conditions.push(`tenant_id = ANY($${params.length}::varchar[])`);
-	}
+	// The time window is always there, so `and()` never comes back empty.
+	const where = and(
+		sql`created_at > NOW() - (${sinceMinutesAgo}::bigint || ' minutes')::interval`,
+		tenantIds?.length ? sql`tenant_id IN ${inList(tenantIds)}` : EMPTY,
+	);
 
 	const { rows } = await db.query<HealthPreviewRow>(
-		`SELECT
+		sql`SELECT
 			status,
 			COUNT(*) as count,
 			AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_seconds
-		FROM ${tableJobs}
-		WHERE ${conditions.join(" AND ")}
+		FROM ${raw(tableJobs)}
+		WHERE ${where}
 		GROUP BY status;`,
-		params.length ? params : undefined,
 	);
 
 	return rows;
