@@ -399,3 +399,4 @@ const jobs = new Jobs({
 | Config              | `package.json`, `tsconfig.json`, `biome.json`                                                                                                           |
 | CI                  | `.github/workflows/ci.yml` (Node + a PostgreSQL service)                                                                                                |
 | Human docs          | `README.md` (usage, "The `db` option", per-major upgrade notes incl. "Upgrading to 4.0"), `API.md` (full reference, "Errors"), `USAGE_DB_RESILIENCE.md` |
+| Backlog             | `docs/backlog.md` (open work after 4.0.0, ranked, not scheduled)                                                                                        |
