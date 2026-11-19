@@ -1,0 +1,4 @@
+# pnpm 12 holds back versions under a day old. Our own packages are exempt, so a release
+# can be adopted down the chain the same day; every other scope stays gated.
+minimumReleaseAgeExclude:
+  - '@marianmeres/*'
