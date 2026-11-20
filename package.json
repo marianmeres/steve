@@ -58,9 +58,9 @@
     "example": "node --env-file-if-exists=.env example/server.ts",
     "ci": "pnpm run typecheck && pnpm run lint && pnpm test",
     "prepublishOnly": "pnpm run ci && pnpm run build",
-    "release": "npx --yes @marianmeres/release@^2.3.0",
-    "rp": "pnpm run release -y && pnpm publish",
-    "rpm": "pnpm run release minor -y && pnpm publish"
+    "release": "npx --yes @marianmeres/release@^2.3.0 --before-bump \"pnpm run ci\"",
+    "rp": "npm whoami >/dev/null && pnpm run release -y --before-push \"pnpm publish\"",
+    "rpm": "npm whoami >/dev/null && pnpm run release minor -y --before-push \"pnpm publish\""
   },
   "dependencies": {
     "@marianmeres/clog": "^3.23.1",

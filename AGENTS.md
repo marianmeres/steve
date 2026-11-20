@@ -15,7 +15,8 @@
 - **Name**: `@marianmeres/steve`
 - **Type**: PostgreSQL job queue/processing library
 - **Runtime**: Node.js
-- **Version**: 4.0.0 (`package.json` is bumped by the release tool, never by hand)
+- **Version**: the one in `package.json`, bumped by the release tool, never by hand (not
+  repeated here: a copy goes stale with every release)
 - **License**: MIT
 
 ## Purpose
@@ -290,8 +291,12 @@ PENDING → RUNNING → COMPLETED
    `--error-on-warnings`, so a warning fails CI; `noNonNullAssertion` is off for `tests/**`
    and `example/**`.
 4. **Versioning / releasing** (human action): `package.json` is the only manifest.
-   `pnpm run rp` / `rpm` = `@marianmeres/release` via npx (bump, commit, tag, push), then
-   `pnpm publish` (`prepublishOnly`: `ci` + `build`). npm is the only registry.
+   `pnpm run rp` / `rpm` = `@marianmeres/release` via npx, with its hooks: `pnpm run ci`
+   before anything is written (`--before-bump`), then bump, commit and tag, then
+   `pnpm publish` while both are still local (`--before-push`), then the push. A red gate
+   changes nothing; a failed publish leaves the commit and tag local and nothing on the
+   remote. `prepublishOnly` (`ci` + `build`) stays, so a bare `pnpm publish` is gated too
+   and `rp` runs `ci` twice. npm is the only registry.
 
 ## Testing
 

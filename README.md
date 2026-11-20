@@ -410,7 +410,7 @@ PostgreSQL database: copy `.env.example` to `.env` and set the `TEST_PG_*` crede
 | `pnpm run ci`                       | typecheck + lint + test, what CI runs                       |
 | `pnpm run build`                    | `tsc -p tsconfig.build.json` → `dist/`                      |
 | `pnpm run example`                  | the jobs monitor example above                              |
-| `pnpm run rp` / `pnpm run rpm`      | patch / minor release, then publish to npm                  |
+| `pnpm run rp` / `pnpm run rpm`      | patch / minor release: gate, tag, publish to npm, then push |
 
 ## Upgrading from 1.x to 2.0
 
