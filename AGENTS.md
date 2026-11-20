@@ -53,7 +53,6 @@ src/
     │   ├── _purge.ts       # Retention: DELETE old terminal jobs (attempt log cascades)
     │   └── _health-preview.ts
     └── utils/
-        ├── driver.ts           # toDriver(db): pg.Pool / pg.Client / Driver → one sqlkit Driver
         ├── with-db-retry.ts    # withDbRetry: sqlkit's withRetry, classified by classifyPg
         ├── db-health.ts        # Health checking/monitoring
         ├── sleep.ts            # Promise-based delay
@@ -98,7 +97,7 @@ From `src/index.ts`:
 - `JobAttempt` - Attempt log entry
 - `JobCreateOptions` - Options for creating jobs
 - `JobCreateDTO` - DTO extending JobCreateOptions with type and payload
-- `JobsOptions` - Jobs constructor options (`db: SteveDb`; `dbHealthCheck.timeoutMs`; `autoCleanup`)
+- `JobsOptions` - Jobs constructor options (`db: PgDb`, sqlkit's; `dbHealthCheck.timeoutMs`; `autoCleanup`)
 - `AutoCleanupOptions` - Reaper configuration
 - `JobContext` - Internal context (exported but internal use; exposes `withRetry`; `db` is a sqlkit `Driver`)
 - `HealthPreviewRow` - Row returned by health preview query
@@ -190,8 +189,8 @@ a tenant-unaware deployment pays ~zero write cost. There is intentionally **no F
 
 ### Driver & Transactions
 
-- The constructor turns `db` into a sqlkit `Driver` with `toDriver(db)` (`utils/driver.ts`): a host's `Driver` is used as is (one whose dialect is not `pg` is a `TypeError`); a `pg.Pool` / `pg.Client` gets ONE driver per object, cached in a `WeakMap` (building one adds an `error` listener to the pool, and `checkDbHealth(pool)` may run on a timer). An invalid `db` throws in the constructor
-- steve imports nothing from `pg`: `SteveDb` is declared with sqlkit's structural types (`PgPoolLike | PgStandaloneClientLike | Driver`)
+- The constructor (and `checkDbHealth` / `DbHealthMonitor`) turns `db` into a sqlkit `Driver` with sqlkit's `toPgDriver(db)` (`@marianmeres/sqlkit/pg`); steve has no driver module of its own. A host's `Driver` is used as is (another dialect, or one lacking a contract member such as a 0.2 driver's missing `savepoint`, is a `TypeError`); a `pg.Pool` / `pg.Client` gets ONE driver per object, kept in sqlkit's `WeakMap` (building one adds an `error` listener to the pool, and `checkDbHealth(pool)` may run on a timer). That map is sqlkit's, not steve's: a host or another library calling `toPgDriver` on the same pool gets steve's driver, and so shares its transactions (async context). An invalid `db` throws in the constructor; the message is sqlkit's (`toPgDriver(db) takes …`)
+- steve imports nothing from `pg`: `db` is typed as sqlkit's `PgDb` (`PgPoolLike | PgStandaloneClientLike | Driver`, structural)
 - `_handleJobSuccess`, `_handleJobFailure`, `_initialize`, `_uninstall` all use `context.db.transaction(async (tx) => …)`. The driver pins one connection for the transaction, checks that the `COMMIT` committed, and destroys a connection whose `ROLLBACK` failed. Inside the callback `tx` and `db` are the same object (the async context decides the transaction); pass `tx` anyway
 - **Never send `begin` / `commit` yourself** — on a pool each statement can take a different connection
 - A failed statement rejects with a sqlkit `SqlError` (node-postgres's `code` and `message`, the original error as `cause`), not a raw `pg` error
@@ -268,7 +267,7 @@ PENDING → RUNNING → COMPLETED
 
 ## Dependencies
 
-- `@marianmeres/sqlkit` - The `Driver` contract: transactions, typed `SqlError`s (steve's `toDriver` builds one over a pool or client); the `insert()` builder for `create`
+- `@marianmeres/sqlkit` - The `Driver` contract: transactions, typed `SqlError`s; `toPgDriver` (`./pg`, since 0.3.2) builds one over a pool or client; the `insert()` builder for `create`
 - `@marianmeres/clog` - Logger
 - `@marianmeres/pubsub` - Event system
 - `@marianmeres/parse-boolean` - Used for `asc` flag coercion
@@ -401,7 +400,6 @@ const jobs = new Jobs({
 | Main entry          | `src/index.ts`                                                                                                                                          |
 | Jobs class          | `src/steve/jobs.ts`                                                                                                                                     |
 | Retry utility       | `src/steve/utils/with-db-retry.ts`                                                                                                                      |
-| Driver seam         | `src/steve/utils/driver.ts`                                                                                                                             |
 | Health utility      | `src/steve/utils/db-health.ts`                                                                                                                          |
 | Timeout/AbortSignal | `src/steve/utils/with-timeout.ts`                                                                                                                       |
 | Tests               | `tests/jobs.test.ts`, `tests/db-resilience.test.ts`, `tests/driver.test.ts`, `tests/fixes.test.ts`, `tests/tenant.test.ts`, `tests/fixes-v3.test.ts`    |

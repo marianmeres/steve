@@ -15,7 +15,7 @@ import {
 	type HealthMonitor,
 	type HealthStatus,
 } from "@marianmeres/sqlkit";
-import { type SteveDb, toDriver } from "./driver.ts";
+import { type PgDb, toPgDriver } from "@marianmeres/sqlkit/pg";
 
 /**
  * Represents the result of a database health check.
@@ -94,11 +94,11 @@ function toStatus(s: HealthStatus, pgVersion?: string): DbHealthStatus {
  * ```
  */
 export async function checkDbHealth(
-	db: SteveDb,
+	db: PgDb,
 	logger?: Logger,
 	options: { timeoutMs?: number } = {},
 ): Promise<DbHealthStatus> {
-	const driver = toDriver(db);
+	const driver = toPgDriver(db);
 	const s = await checkHealth(driver, options);
 	if (!s.healthy) logger?.error?.(`DB health check failed: ${s.error?.message}`);
 	return toStatus(s, s.healthy ? await versionOf(driver) : undefined);
@@ -138,7 +138,7 @@ export class DbHealthMonitor {
 	 *   or out of range
 	 */
 	constructor(
-		db: SteveDb,
+		db: PgDb,
 		options: {
 			/** Check interval in milliseconds, above 0 (default: 30000; 0 also means the default) */
 			intervalMs?: number;
@@ -153,7 +153,7 @@ export class DbHealthMonitor {
 		} = {},
 	) {
 		const { logger, onUnhealthy, onHealthy } = options;
-		const driver = toDriver(db);
+		const driver = toPgDriver(db);
 		this.#driver = driver;
 		this.#monitor = createHealthMonitor(driver, {
 			intervalMs: options.intervalMs || 30_000,

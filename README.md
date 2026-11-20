@@ -99,7 +99,8 @@ await jobs.stop();
 - a [sqlkit](https://www.npmjs.com/package/@marianmeres/sqlkit) `Driver` of the `pg`
   dialect, built with sqlkit 0.3, the minor steve installs (the type of `db` requires
   `savepoint`, which a 0.2 driver lacks). A driver of another dialect is a `TypeError` at
-  construction, and so is anything that is neither of the three.
+  construction, and so are a driver that lacks a member of the contract (the message
+  names it) and anything that is neither of the three.
 
 ```typescript
 import pg from "pg";
@@ -111,8 +112,11 @@ const jobs = new Jobs({ db });
 
 Steve never closes what it is given: ending the pool, the client or the driver is yours.
 
-Given a pool or a client, steve builds its own driver over it, so its statements are never
-part of your transactions. A driver you share with steve is different:
+Given a pool or a client, steve takes sqlkit's driver for it, `toPgDriver(db)`: one per
+pool or client, kept by sqlkit. Your own statements stay out of steve's transactions, and
+steve's out of yours, as long as you don't run them through that driver. A
+`toPgDriver(db)` of your own on the same pool or client hands you that very driver, which
+is then a driver you share with steve. A driver you share with steve is different:
 
 - **It carries your transactions.** A `jobs.create()` called inside your
   `db.transaction()` is part of it: the job exists only if you commit.
@@ -123,7 +127,7 @@ part of your transactions. A driver you share with steve is different:
 - **`dbRetry` cannot help inside your transaction**: after a failure Postgres has aborted
   it. Retry the whole transaction instead.
 - **Pass the driver, not the client under it.** Two drivers over one connection do not
-  wait for each other's transactions.
+  wait for each other's transactions. (`toPgDriver(client)` never builds a second one.)
 - **Rows are the driver's.** Steve is tested on node-postgres. With another driver a
   value may read differently: on PGlite, `healthPreview()`'s `count` comes back as a
   number, not a string.

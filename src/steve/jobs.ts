@@ -2,6 +2,7 @@ import process from "node:process";
 import { createClog, type Logger } from "@marianmeres/clog";
 import { createPubSub, type Subscriber, type Unsubscriber } from "@marianmeres/pubsub";
 import type { Driver } from "@marianmeres/sqlkit";
+import { type PgDb, toPgDriver } from "@marianmeres/sqlkit/pg";
 import { _claimNextJob } from "./job/_claim-next.ts";
 import { _create } from "./job/_create.ts";
 import { _publishDone } from "./job/_events.ts";
@@ -17,7 +18,6 @@ import {
 	DbHealthMonitor,
 	type DbHealthStatus,
 } from "./utils/db-health.ts";
-import { type SteveDb, toDriver } from "./utils/driver.ts";
 import { sleep } from "./utils/sleep.ts";
 import { type DbRetryOptions, withDbRetry } from "./utils/with-db-retry.ts";
 
@@ -96,7 +96,7 @@ export type JobAwareFn = (job: Job) => void | Promise<void>;
  * @internal
  */
 export interface JobContext {
-	/** The sqlkit driver every statement runs on (see `toDriver`) */
+	/** The sqlkit driver every statement runs on (sqlkit's `toPgDriver(db)`) */
 	db: Driver;
 	/** Table name configuration */
 	tableNames: {
@@ -265,7 +265,7 @@ export interface JobsOptions {
 	/** Map of handlers keyed by job type (takes priority over jobHandler) */
 	jobHandlers?: JobHandlersMap;
 	/** PostgreSQL connection: a `pg.Pool`, a `pg.Client` or a sqlkit `Driver` */
-	db: SteveDb;
+	db: PgDb;
 	/** Table name prefix for non-public schemas (e.g., "myschema.") */
 	tablePrefix?: string;
 	/** Polling interval in milliseconds when no jobs are available (default: 1000) */
@@ -422,7 +422,7 @@ export class Jobs {
 			autoCleanup,
 		} = options || {};
 
-		this.#db = toDriver(db);
+		this.#db = toPgDriver(db);
 		this.#jobHandler = jobHandler;
 		this.#jobHandlers = new Map(
 			Object.entries(jobHandlers ?? {}).filter(

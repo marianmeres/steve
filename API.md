@@ -48,7 +48,7 @@ Creates a new Jobs instance.
 
 - `options` - Configuration object (see [JobsOptions](#jobsoptions))
 
-**Throws:** `TypeError` when `db` is not a `pg.Pool`, a `pg.Client` or a sqlkit `Driver`, when it is a `Driver` whose dialect is not `pg`, or when a `dbHealthCheck` option is out of range. Nothing is sent to the database before the first call that needs it.
+**Throws:** `TypeError` (sqlkit's `toPgDriver`) when `db` is not a `pg.Pool`, a `pg.Client` or a sqlkit `Driver`, when it is a `Driver` whose dialect is not `pg` or that lacks a member of the contract; also when a `dbHealthCheck` option is out of range. Nothing is sent to the database before the first call that needs it.
 
 **Example:**
 
@@ -575,7 +575,7 @@ interface JobsOptions {
 - a connected `pg.Client`: any number of processors works on it, but every statement takes its turn;
 - a sqlkit `Driver` (from `@marianmeres/sqlkit`) of the `pg` dialect, used as it is. A driver you share with steve carries your transactions: read [The `db` option](README.md#the-db-option) before passing one.
 
-The first two are declared by shape (sqlkit's `PgPoolLike` and `PgStandaloneClientLike`), so steve imports nothing from `pg`. Steve never closes what it is given.
+The type is sqlkit's `PgDb`; the first two are declared by shape (`PgPoolLike` and `PgStandaloneClientLike`), so steve imports nothing from `pg`. A pool or a client becomes a driver through sqlkit's `toPgDriver(db)`. Steve never closes what it is given.
 
 ---
 
@@ -692,7 +692,7 @@ const BACKOFF_STRATEGY = {
 
 ## Database Utilities
 
-The `db` these utilities take is the same as [`JobsOptions.db`](#jobsoptions): a `pg.Pool`, a `pg.Client` or a sqlkit `Driver` of the `pg` dialect. A pool or client gets one driver per object, shared with every `Jobs` instance over it; steve never closes it.
+The `db` these utilities take is the same as [`JobsOptions.db`](#jobsoptions): a `pg.Pool`, a `pg.Client` or a sqlkit `Driver` of the `pg` dialect. A pool or client gets one driver per object, sqlkit's `toPgDriver(db)`, shared with every `Jobs` instance over it and with every other caller of `toPgDriver` on the same object; steve never closes it.
 
 ### withDbRetry
 

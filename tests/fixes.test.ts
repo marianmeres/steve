@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import type pg from "pg";
+import { toPgDriver } from "@marianmeres/sqlkit/pg";
+import pg from "pg";
 import { JOB_STATUS, type Job, type JobHandler, Jobs } from "../src/index.ts";
 import type { JobContext } from "../src/steve/jobs.ts";
-import { isPool, toDriver } from "../src/steve/utils/driver.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
@@ -61,7 +61,7 @@ testsRunner([
 	{
 		name: "transactions: a finalization runs begin…commit on one pooled client",
 		async fn({ db }) {
-			assert(isPool(db));
+			assert(db instanceof pg.Pool);
 			const jobs = await _createJobs(db, { jobHandler: () => ({ ok: true }) });
 
 			// Record every statement with the index of the client it ran on. The pool
@@ -546,7 +546,7 @@ testsRunner([
 
 			// partial on purpose: _handleJobFailure only reads `db` and `tableNames`
 			const context = {
-				db: toDriver(db),
+				db: toPgDriver(db),
 				tableNames: {
 					tableJobs: `${tablePrefix}__job`,
 					tableAttempts: `${tablePrefix}__job_attempt_log`,

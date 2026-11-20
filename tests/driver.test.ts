@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { createPgDriver } from "@marianmeres/sqlkit/pg";
+import { createPgDriver, toPgDriver } from "@marianmeres/sqlkit/pg";
 import { openSqlite } from "@marianmeres/sqlkit/sqlite";
+import pg from "pg";
 import { checkDbHealth, JOB_STATUS, type Job, Jobs } from "../src/index.ts";
-import { isPool } from "../src/steve/utils/driver.ts";
 import { testsRunner } from "./_tests-runner.ts";
 
 const pollTimeoutMs = 100;
@@ -15,7 +15,7 @@ testsRunner([
 	{
 		name: "driver: a sqlkit Driver built by the host runs a job to completed",
 		async fn({ db }) {
-			assert(isPool(db));
+			assert(db instanceof pg.Pool);
 			// The host's driver: steve uses it as it is and never closes it (the pool is
 			// ended by the runner, and closing the driver would end it twice).
 			const driver = createPgDriver(db);
@@ -61,7 +61,8 @@ testsRunner([
 							gracefulSigterm: false,
 						}),
 					(e: unknown) =>
-						e instanceof TypeError && /PostgreSQL/.test(e.message),
+						e instanceof TypeError &&
+						/pg dialect, got "sqlite"/.test(e.message),
 				);
 			} finally {
 				await sqlite.close();
@@ -72,7 +73,7 @@ testsRunner([
 	{
 		name: "driver: one driver per pool, however many callers share it",
 		async fn({ db }) {
-			assert(isPool(db));
+			assert(db instanceof pg.Pool);
 			assert.deepEqual(db.listenerCount("error"), 0);
 
 			const options = {
@@ -87,6 +88,8 @@ testsRunner([
 				const status = await checkDbHealth(db);
 				assert(status.healthy, status.error ?? "unhealthy");
 			}
+			// The host converting the same pool gets that driver too (sqlkit keeps it).
+			toPgDriver(db);
 
 			assert.deepEqual(db.listenerCount("error"), 1);
 		},
