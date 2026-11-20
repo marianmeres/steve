@@ -10,7 +10,8 @@ import {
 	Jobs,
 } from "../src/index.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
-import { testsRunner } from "./_tests-runner.ts";
+import { testsRunner, track } from "./_tests-runner.ts";
+import { waitFor } from "./_wait.ts";
 
 let _logger: unknown[] = [];
 const tablePrefix = "_foo_";
@@ -25,16 +26,18 @@ async function _createJobs(
 
 	const log = (...args: unknown[]) => _logger.push(args[0]);
 
-	const jobs = new Jobs({
-		db,
-		jobHandler,
-		jobHandlers,
-		logger: { debug: log, error: log, warn: log, log },
-		// must be turned off in tests... (it leaves active process listener, which deno complains about)
-		gracefulSigterm: false,
-		pollTimeoutMs,
-		tablePrefix,
-	});
+	const jobs = track(
+		new Jobs({
+			db,
+			jobHandler,
+			jobHandlers,
+			logger: { debug: log, error: log, warn: log, log },
+			// must be turned off in tests... (it leaves active process listener, which deno complains about)
+			gracefulSigterm: false,
+			pollTimeoutMs,
+			tablePrefix,
+		}),
+	);
 
 	// manually hard reset before each test
 	await jobs.resetHard();
@@ -42,14 +45,23 @@ async function _createJobs(
 	return jobs;
 }
 
+/** The job's status as stored. */
+const statusOf = (jobs: Jobs, uid: string) =>
+	jobs.find(uid).then(({ job }) => job?.status);
+
 testsRunner([
 	{
 		name: "happy flow",
 		async fn({ db }) {
 			const log: Job[] = [];
+			// the handler holds until the test lets it go, so "running" can be observed
+			let release = () => {};
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
 			const jobs = await _createJobs(db, async (job: Job) => {
-				await sleep(20);
 				log.push(job);
+				await gate;
 				return { hey: "ho" };
 			});
 
@@ -72,23 +84,23 @@ testsRunner([
 			assert(!job.started_at);
 			assert(!job.completed_at);
 
-			// start processing... the first job will be claimed and processed right now
-			// because polling happens after the claim...
 			await jobs.start(1);
 
-			//
+			// the handler is held, so the job is claimed and running, not completed yet
+			await waitFor(
+				async () => (await statusOf(jobs, job.uid)) === JOB_STATUS.RUNNING,
+			);
 			job = (await jobs.find(job.uid)).job!;
-			// console.log(job);
-
-			// out job handler sleeps a bit, so we know, that it must be
-			// running first attempt, and not completed yet
 			assert.deepEqual(job.status, JOB_STATUS.RUNNING);
 			assert.deepEqual(job.attempts, 1);
 			assert(job.started_at);
 			assert(!job.completed_at);
 
-			// make sure to sleep long enough for the job to complete (the job takes 20ms)
-			await sleep(100);
+			// let the handler finish, and wait for the job to complete
+			release();
+			await waitFor(
+				async () => (await statusOf(jobs, job.uid)) === JOB_STATUS.COMPLETED,
+			);
 
 			//
 			const r = await jobs.find(job.uid, true);
@@ -153,8 +165,8 @@ testsRunner([
 
 			await jobs.start(1);
 
-			// sleep a while... (we need 3 process cycles)
-			await sleep(500);
+			// 3 process cycles: done fires after the last attempt's events
+			await waitFor(() => doneCounter === 1, { timeoutMs: 5_000 });
 
 			assert.deepEqual(_errorCounter, 2);
 			assert.deepEqual(_executionCounter, 3);
@@ -215,8 +227,8 @@ testsRunner([
 
 			await jobs.start(1);
 
-			// sleep a while... (we need 3 process cycles)
-			await sleep(500);
+			// 5 process cycles: done fires after the last one
+			await waitFor(() => doneCounter === 1, { timeoutMs: 5_000 });
 
 			assert.deepEqual(_errorCounter, 5);
 			assert.deepEqual(_executionCounter, 5);
@@ -328,7 +340,7 @@ testsRunner([
 
 			await jobs.start(1);
 
-			await sleep(100);
+			await waitFor(() => failedCounter + completedCounter === 3);
 
 			// teardown
 			await jobs.stop();
@@ -367,9 +379,8 @@ testsRunner([
 			// still must NOT be done yet
 			assert(!jobDone);
 
-			await sleep(250);
-
-			// now MUST be done finally
+			// now it MUST get done
+			await waitFor(() => jobDone);
 			assert(jobDone);
 
 			job = (await jobs.find(job.uid)).job!;
@@ -407,8 +418,11 @@ testsRunner([
 
 			await jobs.start(1);
 
-			// sleep a while... (we need 3 process cycles)
-			await sleep(600);
+			// 2 attempts, each timed out at 150 ms
+			await waitFor(
+				async () => (await statusOf(jobs, job.uid)) === JOB_STATUS.FAILED,
+				{ timeoutMs: 5_000 },
+			);
 
 			// teardown
 			await jobs.stop();
@@ -447,7 +461,8 @@ testsRunner([
 
 			await jobs.start(1);
 
-			await sleep(100);
+			// done fires after the attempt events
+			await waitFor(() => onDoneLog.length === 1);
 
 			assert.deepEqual(onDoneLog.length, 1);
 			assert.deepEqual(onAttemptLog.length, 2); // running + completed

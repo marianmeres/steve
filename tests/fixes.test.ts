@@ -4,7 +4,8 @@ import pg from "pg";
 import { JOB_STATUS, type Job, type JobHandler, Jobs } from "../src/index.ts";
 import type { JobContext } from "../src/steve/jobs.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
-import { testsRunner } from "./_tests-runner.ts";
+import { testsRunner, track } from "./_tests-runner.ts";
+import { waitFor } from "./_wait.ts";
 
 const tablePrefix = "_fixes_";
 const pollTimeoutMs = 100;
@@ -21,38 +22,19 @@ interface CreateJobsOptions {
 }
 
 async function _createJobs(db: pg.Client | pg.Pool, opts: CreateJobsOptions = {}) {
-	const jobs = new Jobs({
-		db,
-		logger: silentLogger(),
-		gracefulSigterm: opts.gracefulSigterm ?? false,
-		pollTimeoutMs,
-		tablePrefix,
-		jobHandler: opts.jobHandler,
-		autoCleanup: opts.autoCleanup,
-	});
+	const jobs = track(
+		new Jobs({
+			db,
+			logger: silentLogger(),
+			gracefulSigterm: opts.gracefulSigterm ?? false,
+			pollTimeoutMs,
+			tablePrefix,
+			jobHandler: opts.jobHandler,
+			autoCleanup: opts.autoCleanup,
+		}),
+	);
 	await jobs.resetHard();
 	return jobs;
-}
-
-/**
- * Small helper that awaits a condition with a small polling budget. Uses a single
- * timer at a time, so no stray timer outlives the test.
- */
-async function waitFor(
-	predicate: () => boolean | Promise<boolean>,
-	{ timeoutMs = 1000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {},
-): Promise<boolean> {
-	const ref = { id: -1 };
-	const deadline = Date.now() + timeoutMs;
-	try {
-		while (Date.now() < deadline) {
-			if (await predicate()) return true;
-			await sleep(stepMs, ref);
-		}
-		return await Promise.resolve(predicate());
-	} finally {
-		clearTimeout(ref.id);
-	}
 }
 
 testsRunner([
@@ -167,24 +149,28 @@ testsRunner([
 
 			// Two instances with DIFFERENT prefixes so they don't race over rows,
 			// but share the same user callback.
-			const jobsA = new Jobs({
-				db,
-				logger: silentLogger(),
-				gracefulSigterm: false,
-				pollTimeoutMs,
-				tablePrefix: "_fixes_a_",
-				jobHandler: () => ({}),
-			});
+			const jobsA = track(
+				new Jobs({
+					db,
+					logger: silentLogger(),
+					gracefulSigterm: false,
+					pollTimeoutMs,
+					tablePrefix: "_fixes_a_",
+					jobHandler: () => ({}),
+				}),
+			);
 			await jobsA.resetHard();
 
-			const jobsB = new Jobs({
-				db,
-				logger: silentLogger(),
-				gracefulSigterm: false,
-				pollTimeoutMs,
-				tablePrefix: "_fixes_b_",
-				jobHandler: () => ({}),
-			});
+			const jobsB = track(
+				new Jobs({
+					db,
+					logger: silentLogger(),
+					gracefulSigterm: false,
+					pollTimeoutMs,
+					tablePrefix: "_fixes_b_",
+					jobHandler: () => ({}),
+				}),
+			);
 			await jobsB.resetHard();
 
 			const unsubA = jobsA.onDone("a", cb);
@@ -388,14 +374,16 @@ testsRunner([
 			const proc = (await import("node:process")).default as any;
 			const baseline = proc.listenerCount("SIGTERM");
 
-			const jobs = new Jobs({
-				db,
-				logger: silentLogger(),
-				gracefulSigterm: true,
-				pollTimeoutMs,
-				tablePrefix,
-				jobHandler: () => ({}),
-			});
+			const jobs = track(
+				new Jobs({
+					db,
+					logger: silentLogger(),
+					gracefulSigterm: true,
+					pollTimeoutMs,
+					tablePrefix,
+					jobHandler: () => ({}),
+				}),
+			);
 			await jobs.resetHard();
 
 			try {

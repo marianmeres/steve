@@ -12,7 +12,8 @@ import type pg from "pg";
 import { JOB_STATUS, type Job, type JobHandler, Jobs } from "../src/index.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { createPgClient } from "./_pg.ts";
-import { testsRunner } from "./_tests-runner.ts";
+import { testsRunner, track } from "./_tests-runner.ts";
+import { waitFor } from "./_wait.ts";
 
 const tablePrefix = "_fixes_v3_";
 const pollTimeoutMs = 50;
@@ -35,35 +36,19 @@ interface CreateJobsOptions {
 }
 
 async function _createJobs(db: pg.Client | pg.Pool, opts: CreateJobsOptions = {}) {
-	const jobs = new Jobs({
-		db,
-		logger: opts.logger ?? captureLogger().logger,
-		gracefulSigterm: false,
-		pollTimeoutMs,
-		tablePrefix: opts.prefix ?? tablePrefix,
-		jobHandler: opts.jobHandler,
-		autoCleanup: opts.autoCleanup,
-	});
+	const jobs = track(
+		new Jobs({
+			db,
+			logger: opts.logger ?? captureLogger().logger,
+			gracefulSigterm: false,
+			pollTimeoutMs,
+			tablePrefix: opts.prefix ?? tablePrefix,
+			jobHandler: opts.jobHandler,
+			autoCleanup: opts.autoCleanup,
+		}),
+	);
 	await jobs.resetHard();
 	return jobs;
-}
-
-/** Await a condition with a polling budget; a single timer at a time, cleared on exit. */
-async function waitFor(
-	predicate: () => boolean | Promise<boolean>,
-	{ timeoutMs = 2000, stepMs = 20 }: { timeoutMs?: number; stepMs?: number } = {},
-): Promise<boolean> {
-	const ref = { id: -1 };
-	const deadline = Date.now() + timeoutMs;
-	try {
-		while (Date.now() < deadline) {
-			if (await predicate()) return true;
-			await sleep(stepMs, ref);
-		}
-		return await Promise.resolve(predicate());
-	} finally {
-		clearTimeout(ref.id);
-	}
 }
 
 const statusOf = (jobs: Jobs, uid: string) =>
@@ -362,17 +347,19 @@ testsRunner([
 		async fn(_ctx) {
 			const client = createPgClient();
 			await client.connect();
-			const jobs = new Jobs({
-				db: client,
-				logger: captureLogger().logger,
-				gracefulSigterm: false,
-				pollTimeoutMs,
-				tablePrefix: "_fixes_v3_client_",
-				jobHandler: async () => {
-					await sleep(5);
-					return { ok: true };
-				},
-			});
+			const jobs = track(
+				new Jobs({
+					db: client,
+					logger: captureLogger().logger,
+					gracefulSigterm: false,
+					pollTimeoutMs,
+					tablePrefix: "_fixes_v3_client_",
+					jobHandler: async () => {
+						await sleep(5);
+						return { ok: true };
+					},
+				}),
+			);
 			try {
 				await jobs.resetHard();
 				await jobs.start(2);
@@ -421,14 +408,16 @@ testsRunner([
 		name: "init: concurrent first calls share one initialization; resetHard() always runs",
 		async fn({ db }) {
 			const prefix = "_fixes_v3_init_";
-			const jobs = new Jobs({
-				db,
-				logger: captureLogger().logger,
-				gracefulSigterm: false,
-				pollTimeoutMs,
-				tablePrefix: prefix,
-				jobHandler: () => ({}),
-			});
+			const jobs = track(
+				new Jobs({
+					db,
+					logger: captureLogger().logger,
+					gracefulSigterm: false,
+					pollTimeoutMs,
+					tablePrefix: prefix,
+					jobHandler: () => ({}),
+				}),
+			);
 			try {
 				await jobs.uninstall(); // fresh: tables absent
 				await Promise.all([jobs.start(1), jobs.create("x", {}), jobs.fetchAll()]);
@@ -653,5 +642,7 @@ testsRunner([
 				await db.query(`DROP TABLE IF EXISTS _sigterm_child___job;`);
 			}
 		},
+		// two 15 s waits of its own (start, then termination)
+		timeoutMs: 45_000,
 	},
 ]);

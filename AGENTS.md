@@ -305,10 +305,22 @@ pnpm test           # Node, the gate
 ```
 
 `node --test` runs with `--test-concurrency=1`, so files run one at a time: every file
-hits the same database and many tests are timing-based
-(sleep, then assert). Tests are
-`node:test` + `node:assert/strict`, registered through `tests/_tests-runner.ts` (each test
-gets a fresh `pg.Pool`, ended afterwards).
+hits the same database and the tests drive real workers. Tests are
+`node:test` + `node:assert/strict`, registered through `tests/_tests-runner.ts`:
+
+- each test gets a fresh `pg.Pool` (none with `raw: true`), ended afterwards;
+- each test has a ceiling, 30 s unless it sets `timeoutMs`: past it the test fails;
+- **`track(jobs)` every `Jobs` a test starts** (the files' `_createJobs` helpers do).
+  After the test, however it ends, the runner stops every tracked instance before it
+  ends the pool. An instance left running keeps polling, so the test file never exits
+  and the suite hangs instead of failing.
+
+**Wait for a condition, never a fixed time** (`waitFor(predicate, { timeoutMs })` from
+`tests/_wait.ts`, then assert the values): a job's status read back with `find()`, a
+done or attempt event, a counter. A fixed `sleep` before a positive assertion races the
+worker and fails under load. A `sleep` is right only as a window in which something
+must NOT happen (a scheduled job not run early, no retry after completion). CI has
+`timeout-minutes: 10`.
 
 Requires PostgreSQL with credentials in `.env` file (loaded via `--env-file-if-exists`):
 

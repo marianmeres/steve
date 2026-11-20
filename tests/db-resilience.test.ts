@@ -9,24 +9,31 @@ import {
 } from "../src/steve/utils/db-health.ts";
 import { sleep } from "../src/steve/utils/sleep.ts";
 import { withDbRetry } from "../src/steve/utils/with-db-retry.ts";
-import { testsRunner } from "./_tests-runner.ts";
+import { testsRunner, track } from "./_tests-runner.ts";
+import { waitFor } from "./_wait.ts";
 
 const tablePrefix = "_db_resilience_";
 const pollTimeoutMs = 100;
 
 async function _createJobs(db: pg.Client | pg.Pool, options: Partial<JobsOptions> = {}) {
-	const jobs = new Jobs({
-		db,
-		logger: { debug: () => {}, error: () => {}, warn: () => {}, log: () => {} },
-		gracefulSigterm: false,
-		pollTimeoutMs,
-		tablePrefix,
-		...options,
-	});
+	const jobs = track(
+		new Jobs({
+			db,
+			logger: { debug: () => {}, error: () => {}, warn: () => {}, log: () => {} },
+			gracefulSigterm: false,
+			pollTimeoutMs,
+			tablePrefix,
+			...options,
+		}),
+	);
 
 	await jobs.resetHard();
 	return jobs;
 }
+
+/** Whether the job reads back as completed. */
+const isCompleted = (jobs: Jobs, uid: string) => async () =>
+	(await jobs.find(uid)).job?.status === "completed";
 
 /**
  * A `pg` driver for the health check alone: its `select 1` answers as `answer` does,
@@ -282,7 +289,7 @@ testsRunner([
 			try {
 				await monitor.start();
 				assert.deepEqual(unhealthy.length, 1); // the first check
-				for (let i = 0; i < 100 && !healthy.length; i++) await sleep(10);
+				await waitFor(() => healthy.length > 0);
 			} finally {
 				monitor.stop();
 			}
@@ -309,7 +316,7 @@ testsRunner([
 			await jobs.start(1);
 
 			const job = await jobs.create("test", { foo: "bar" });
-			await sleep(200);
+			await waitFor(isCompleted(jobs, job.uid));
 
 			const found = await jobs.find(job.uid);
 			assert.deepEqual(found.job!.status, "completed");
@@ -369,7 +376,7 @@ testsRunner([
 			await jobs.start(1);
 
 			const job = await jobs.create("test", {});
-			await sleep(200);
+			await waitFor(isCompleted(jobs, job.uid));
 
 			const found = await jobs.find(job.uid);
 			assert.deepEqual(found.job!.status, "completed");
@@ -388,8 +395,8 @@ testsRunner([
 
 			await jobs.start(1);
 
-			// Wait for health check to run (it runs immediately on start)
-			await sleep(150);
+			// the first check runs on start
+			await waitFor(() => jobs.getDbHealth() !== null);
 
 			// Check we can get health status
 			const health = jobs.getDbHealth();
@@ -414,8 +421,8 @@ testsRunner([
 
 			await jobs.start(1);
 
-			// Wait long enough for at least one check
-			await sleep(100);
+			// at least one check
+			await waitFor(() => jobs.getDbHealth() !== null);
 
 			// Verify the health status works
 			const health = jobs.getDbHealth();
@@ -464,8 +471,8 @@ testsRunner([
 
 			await jobs.start(1);
 
-			// Wait for at least one health check
-			await sleep(150);
+			// at least one health check
+			await waitFor(() => jobs.getDbHealth() !== null);
 
 			// Should have health status
 			const healthBefore = jobs.getDbHealth();

@@ -1,22 +1,24 @@
 import assert from "node:assert/strict";
 import type pg from "pg";
 import { JOB_STATUS, type Job, Jobs } from "../src/index.ts";
-import { sleep } from "../src/steve/utils/sleep.ts";
-import { testsRunner } from "./_tests-runner.ts";
+import { testsRunner, track } from "./_tests-runner.ts";
+import { waitFor } from "./_wait.ts";
 
 const silent = { debug() {}, error() {}, warn() {}, log() {} };
 const tablePrefix = "_tenant_";
 const pollTimeoutMs = 100;
 
 async function _createJobs(db: pg.Client | pg.Pool, jobHandler?: (job: Job) => unknown) {
-	const jobs = new Jobs({
-		db,
-		jobHandler,
-		logger: silent,
-		gracefulSigterm: false,
-		pollTimeoutMs,
-		tablePrefix,
-	});
+	const jobs = track(
+		new Jobs({
+			db,
+			jobHandler,
+			logger: silent,
+			gracefulSigterm: false,
+			pollTimeoutMs,
+			tablePrefix,
+		}),
+	);
 	await jobs.resetHard();
 	return jobs;
 }
@@ -122,8 +124,11 @@ testsRunner([
 
 			const job = await jobs.create("x", {}, { tenant_id: "acme" });
 			await jobs.start(1);
-			// give the worker time to claim + complete
-			for (let i = 0; i < 20 && seen.length === 0; i++) await sleep(50);
+			// wait for the worker to claim + complete
+			await waitFor(
+				async () =>
+					(await jobs.find(job.uid)).job?.status === JOB_STATUS.COMPLETED,
+			);
 			await jobs.stop();
 
 			const done = (await jobs.find(job.uid)).job!;

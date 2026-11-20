@@ -3,7 +3,7 @@ import { createPgDriver, toPgDriver } from "@marianmeres/sqlkit/pg";
 import { openSqlite } from "@marianmeres/sqlkit/sqlite";
 import pg from "pg";
 import { checkDbHealth, JOB_STATUS, type Job, Jobs } from "../src/index.ts";
-import { testsRunner } from "./_tests-runner.ts";
+import { testsRunner, track } from "./_tests-runner.ts";
 
 const pollTimeoutMs = 100;
 
@@ -19,14 +19,16 @@ testsRunner([
 			// The host's driver: steve uses it as it is and never closes it (the pool is
 			// ended by the runner, and closing the driver would end it twice).
 			const driver = createPgDriver(db);
-			const jobs = new Jobs({
-				db: driver,
-				logger: silentLogger(),
-				gracefulSigterm: false,
-				pollTimeoutMs,
-				tablePrefix: "_driver_",
-				jobHandler: () => ({ ok: true }),
-			});
+			const jobs = track(
+				new Jobs({
+					db: driver,
+					logger: silentLogger(),
+					gracefulSigterm: false,
+					pollTimeoutMs,
+					tablePrefix: "_driver_",
+					jobHandler: () => ({ ok: true }),
+				}),
+			);
 			try {
 				await jobs.resetHard();
 				const done = new Promise<Job>((resolve) => {

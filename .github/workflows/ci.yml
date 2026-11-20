@@ -10,6 +10,8 @@ jobs:
   # Nothing runs on Deno or Bun.
   node:
     runs-on: ubuntu-latest
+    # The run takes a few minutes; a hang must not hold a runner for GitHub's 6 h default.
+    timeout-minutes: 10
     # The test suite needs a real PostgreSQL (see .env.example).
     services:
       postgres:
