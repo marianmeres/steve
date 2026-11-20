@@ -22,7 +22,7 @@ npm i @marianmeres/steve   # or pnpm add
 ```
 
 The package targets Node 24.20 or later on the 24 line, or 26.6 or later; not 25. That is
-what `@marianmeres/sqlkit` 0.2 requires, which steve installs. Up to 4.0.1 steve asked for
+what `@marianmeres/sqlkit` 0.3 requires, which steve installs. Up to 4.0.1 steve asked for
 Node >= 24.12.
 
 It is published to npm only. 3.1.2 is the last version on JSR, where it stays installable.
@@ -97,8 +97,9 @@ await jobs.stop();
 - a connected `pg.Client`: on a single connection every statement takes its turn, so
   handlers overlap but database work does not;
 - a [sqlkit](https://www.npmjs.com/package/@marianmeres/sqlkit) `Driver` of the `pg`
-  dialect. A driver of another dialect is a `TypeError` at construction, and so is
-  anything that is neither of the three.
+  dialect, built with sqlkit 0.3, the minor steve installs (the type of `db` requires
+  `savepoint`, which a 0.2 driver lacks). A driver of another dialect is a `TypeError` at
+  construction, and so is anything that is neither of the three.
 
 ```typescript
 import pg from "pg";

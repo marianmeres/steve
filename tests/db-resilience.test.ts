@@ -52,6 +52,7 @@ function stubDriver(answer: () => Promise<unknown>): Driver {
 		query: query as Driver["query"],
 		exec: unused,
 		transaction: unused,
+		savepoint: unused,
 		exclusive: unused,
 		close: async () => {},
 	};

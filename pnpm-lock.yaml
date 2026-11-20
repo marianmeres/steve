@@ -176,8 +176,8 @@ importers:
         specifier: ^3.1.0
         version: 3.1.0
       '@marianmeres/sqlkit':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.1
+        version: 0.3.1
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.6.3
@@ -316,8 +316,8 @@ packages:
   '@marianmeres/simple-router@3.5.0':
     resolution: {integrity: sha512-MAL/SSAo0FgJcOZh4A500JXAHRbq7jUMcnMCwhQq1ekkJikEN4ZG+rFUGqhmKswX65fhksC3KCG4v0DqFZAXUQ==}
 
-  '@marianmeres/sqlkit@0.2.0':
-    resolution: {integrity: sha512-jlE0VU87E9p24vAX/on2KEXc5AAx/Yqu7gNeiKdW0R5KhJBk/HOkdQWnkg92kwcQ8Zasc4kPB8uFHOBJe2y6SA==}
+  '@marianmeres/sqlkit@0.3.1':
+    resolution: {integrity: sha512-sN+1mTJ9TLUOPMD9/tluFwNUndKv23ZvnvWAqNE6dhr5BriAYo5XTTvQnVeWDh26e03webIpDG2FdnAmIy81RQ==}
     engines: {node: ^24.20.0 || >=26.6.0}
 
   '@types/node@26.6.6':
@@ -601,7 +601,7 @@ snapshots:
     dependencies:
       '@marianmeres/pubsub': 3.1.0
 
-  '@marianmeres/sqlkit@0.2.0':
+  '@marianmeres/sqlkit@0.3.1':
     dependencies:
       '@marianmeres/migrate': 2.0.0
 
