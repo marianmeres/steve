@@ -242,48 +242,54 @@ testsRunner([
 		async fn({ db }) {
 			const jobs = await _createJobs(db);
 
-			const createFoo = () =>
-				jobs.create(
-					"foo",
-					{ bar: "baz" },
-					{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 },
-				);
+			// Creates a "foo" job and waits until it is finalized, then reads it back.
+			// Waits on the done event (subscribed before the job exists, so it cannot be
+			// missed) instead of sleeping, and gives up after 2 s instead of hanging.
+			const runFoo = async (): Promise<Job> => {
+				const ref = { id: -1 };
+				let unsubscribe = () => {};
+				const finalized = new Promise<Job>((resolve) => {
+					unsubscribe = jobs.onDone("foo", resolve);
+				});
+				try {
+					const { uid } = await jobs.create(
+						"foo",
+						{ bar: "baz" },
+						{ backoff_strategy: BACKOFF_STRATEGY.NONE, max_attempts: 1 },
+					);
+					const done = await Promise.race([
+						finalized,
+						sleep(2_000, ref).then(() => {
+							throw new Error(`job ${uid} was not finalized within 2 s`);
+						}),
+					]);
+					assert.deepEqual(done.uid, uid);
+					return (await jobs.find(uid)).job!;
+				} finally {
+					clearTimeout(ref.id);
+					unsubscribe();
+				}
+			};
 
-			let j = await createFoo();
+			try {
+				await jobs.start(1);
 
-			await jobs.start(1);
+				// no handler exists
+				assert.deepEqual((await runFoo()).result, { noop: true });
 
-			let r = await jobs.find(j.uid);
+				// register handler now
+				jobs.setHandler("foo", (_j: Job) => ({ foo: "handler" }));
+				assert.deepEqual((await runFoo()).result, { foo: "handler" });
 
-			// no handler exists
-			assert.deepEqual(r.job!.result, { noop: true });
-
-			// register handler now
-			jobs.setHandler("foo", (_j: Job) => ({ foo: "handler" }));
-
-			j = await createFoo();
-
-			await sleep(300);
-
-			r = await jobs.find(j.uid);
-
-			// now must be handler
-			assert.deepEqual(r.job!.result, { foo: "handler" });
-
-			// now unset handler
-			jobs.setHandler("foo", null);
-
-			j = await createFoo();
-			await sleep(200);
-
-			r = await jobs.find(j.uid);
-
-			// noop again
-			assert.deepEqual(r.job!.result, { noop: true });
-
-			// teardown
-			await jobs.stop();
-			jobs.unsubscribeAll();
+				// now unset handler: noop again
+				jobs.setHandler("foo", null);
+				assert.deepEqual((await runFoo()).result, { noop: true });
+			} finally {
+				// a failed assertion must not leave the processor polling: the test file
+				// would never exit and the suite would hang
+				await jobs.stop();
+				jobs.unsubscribeAll();
+			}
 		},
 		// only: true,
 	},
