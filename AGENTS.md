@@ -22,6 +22,7 @@
 ## Purpose
 
 Steve is a PostgreSQL-based job processing manager that provides:
+
 - Distributed job queue with multiple concurrent workers (`FOR UPDATE SKIP LOCKED`)
 - Automatic retry with configurable exponential backoff (capped at 1 hour)
 - Job scheduling (delayed execution via `run_at`)
@@ -311,6 +312,7 @@ hits the same database and many tests are timing-based
 gets a fresh `pg.Pool`, ended afterwards).
 
 Requires PostgreSQL with credentials in `.env` file (loaded via `--env-file-if-exists`):
+
 ```
 TEST_PG_HOST=localhost
 TEST_PG_DATABASE=test
@@ -320,6 +322,7 @@ TEST_PG_PORT=5432
 ```
 
 Test files:
+
 - `tests/jobs.test.ts` — core Jobs class behavior
 - `tests/db-resilience.test.ts` — retry and health monitor
 - `tests/driver.test.ts` — the driver seam (a host-built `Driver` runs a job, a non-`pg` driver is refused, one driver per pool)

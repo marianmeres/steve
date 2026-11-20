@@ -45,11 +45,13 @@ new Jobs(options: JobsOptions)
 Creates a new Jobs instance.
 
 **Parameters:**
+
 - `options` - Configuration object (see [JobsOptions](#jobsoptions))
 
 **Throws:** `TypeError` when `db` is not a `pg.Pool`, a `pg.Client` or a sqlkit `Driver`, when it is a `Driver` whose dialect is not `pg`, or when a `dbHealthCheck` option is out of range. Nothing is sent to the database before the first call that needs it.
 
 **Example:**
+
 ```typescript
 import { Jobs } from "@marianmeres/steve";
 
@@ -76,14 +78,17 @@ async start(processorsCount?: number): Promise<void>
 Starts job processing with the specified number of concurrent workers.
 
 **Parameters:**
+
 - `processorsCount` - Number of concurrent job processors (default: `2`)
 
 **Behavior:**
+
 - **Throws** if initialization fails (e.g., database unreachable) so callers can fail fast.
 - **Any `processorsCount` works on any `db`.** On a single connection (a `pg.Client`, or a `Driver` over one) every statement takes its turn, so handlers overlap but database work does not. A `pg.Pool` is still the recommendation.
 - **Idempotent** — calling `start()` while already running is a no-op with a warning log; it will NOT spawn additional processors. To restart, call `stop()` first.
 
 **Example:**
+
 ```typescript
 await jobs.start(4); // Start with 4 concurrent workers
 ```
@@ -116,6 +121,7 @@ async create(
 Creates a new job and adds it to the processing queue.
 
 **Parameters:**
+
 - `type` - Job type identifier used to route to the appropriate handler
 - `payload` - Custom data to pass to the job handler (default: `{}`)
 - `options` - Configuration for retry, timeout, scheduling, and the optional `tenant_id` tag (see [JobCreateOptions](#jobcreateoptions))
@@ -124,6 +130,7 @@ Creates a new job and adds it to the processing queue.
 **Returns:** The created `Job` object with its assigned UID
 
 **Example:**
+
 ```typescript
 const job = await jobs.create(
   "send-email",
@@ -148,11 +155,13 @@ async find(
 Finds a job by its unique identifier. `job` is `undefined` when not found; a malformed (non-UUID) `uid` is reported as not-found rather than as a database error.
 
 **Parameters:**
+
 - `uid` - The unique identifier (UUID) of the job
 - `withAttempts` - Whether to include attempt history (default: `false`)
 - `options.tenant_id` - Optional tenant guard. When set, a job whose `tenant_id` does not match is reported as **not-found** (`job` is `undefined`). Since `uid` is a globally-unique UUID this is defense-in-depth, not a correctness requirement.
 
 **Example:**
+
 ```typescript
 const { job, attempts } = await jobs.find("abc-123", true);
 if (job) {
@@ -181,6 +190,7 @@ async fetchAll(
 Fetches all jobs, optionally filtered by status.
 
 **Parameters:**
+
 - `status` - Filter by status (single value or array)
 - `options.limit` - Maximum number of jobs to return
 - `options.offset` - Number of jobs to skip
@@ -189,6 +199,7 @@ Fetches all jobs, optionally filtered by status.
 - `options.tenant_id` - Only return jobs tagged with this tenant (single value or array)
 
 **Example:**
+
 ```typescript
 // Get all pending jobs
 const pending = await jobs.fetchAll("pending");
@@ -211,12 +222,14 @@ setHandler(type: string, handler: JobHandler | null | undefined): Jobs
 Registers or removes a handler for a specific job type.
 
 **Parameters:**
+
 - `type` - The job type to register the handler for
 - `handler` - The handler function, or `null`/`undefined` to remove
 
 **Returns:** The Jobs instance for method chaining
 
 **Example:**
+
 ```typescript
 jobs.setHandler("email", async (job) => {
   await sendEmail(job.payload);
@@ -263,6 +276,7 @@ Subscribes to job completion events for specific job types.
 **In-process only**: events are published by the instance that finalizes the job (its own processors / its own `cleanup()`), not through the database. A subscriber in a process that only creates jobs never sees them. Errors thrown or rejected by the callback are logged and never affect the job.
 
 **Parameters:**
+
 - `type` - Job type or array of types to subscribe to
 - `cb` - Callback function to execute on job completion
 - `skipIfExists` - Skip if callback already registered (default: `true`)
@@ -270,6 +284,7 @@ Subscribes to job completion events for specific job types.
 **Returns:** Unsubscribe function to remove the listener
 
 **Example:**
+
 ```typescript
 const unsub = jobs.onDone("email", (job) => {
   if (job.status === "completed") {
@@ -333,12 +348,14 @@ The threshold is measured on the **current attempt** — the time the running at
 Called automatically when `autoCleanup` is enabled on the Jobs instance; otherwise should be called periodically by the consumer.
 
 **Parameters:**
+
 - `maxAllowedRunDurationMinutes` - Threshold before a `running` job is considered stuck (default: `5`)
 - `options.tenant_id` - Optionally reap only the given tenant(s)' stuck jobs. Omitted reaps across **all** tenants. **Note:** `autoCleanup` always runs tenant-blind; pass this only on manual `cleanup()` calls.
 
 **Returns:** Number of jobs reaped
 
 **Example:**
+
 ```typescript
 const reaped = await jobs.cleanup(10);
 console.log(`Reaped ${reaped} stuck jobs`);
@@ -363,6 +380,7 @@ Deletes terminal jobs (and, via `ON DELETE CASCADE`, their attempt-log rows) who
 Only terminal statuses can be purged. Passing `pending` or `running` throws a `TypeError`.
 
 **Parameters:**
+
 - `olderThanMinutes` - Retention window (default: `7 * 24 * 60`, i.e. 7 days)
 - `options.statuses` - Which terminal statuses to purge (default: `["completed", "failed", "expired"]`)
 - `options.tenant_id` - Optionally purge only the given tenant(s)' jobs
@@ -370,6 +388,7 @@ Only terminal statuses can be purged. Passing `pending` or `running` throws a `T
 **Returns:** Number of jobs deleted
 
 **Example:**
+
 ```typescript
 // drop completed jobs older than a day, keep failures for a month
 await jobs.purge(24 * 60, { statuses: ["completed"] });
@@ -390,6 +409,7 @@ async healthPreview(
 Collects job statistics for health monitoring: one row per status.
 
 **Parameters:**
+
 - `sinceMinutesAgo` - Time window for statistics (default: `60`)
 - `options.tenant_id` - Optionally restrict the stats to one or more tenants
 
@@ -583,6 +603,7 @@ A function that processes a job. The returned value is stored in the job's `resu
 When `max_attempt_duration_ms > 0`, the second argument is an `AbortSignal` that fires when the attempt times out. Handlers should respect the signal for best behavior; handlers that ignore it will keep running in the background even after the attempt is recorded as timed-out (JavaScript cannot forcibly cancel a running Promise).
 
 **Example (cooperative abort):**
+
 ```typescript
 async function handler(job: Job, signal?: AbortSignal) {
   const res = await fetch(url, { signal });  // fetch respects AbortSignal
@@ -697,6 +718,7 @@ The whole function runs again, so wrap something safe to run twice: one statemen
 **Throws:** `TypeError` (a rejection, before `fn` is called) when an option is of the wrong type or out of range, such as a negative or fractional `maxRetries` or a `backoffMultiplier` below 1.
 
 **Example:**
+
 ```typescript
 const result = await withDbRetry(
   async () => await pool.query("SELECT * FROM users"),
@@ -721,6 +743,7 @@ Performs a one-time health check: one `select 1`, timed, raced against `timeoutM
 Never rejects for a database that is down; a failed check is logged through `logger.error`.
 
 **Parameters:**
+
 - `db` - The database (see above)
 - `logger` - Optional logger for the failure message
 - `options.timeoutMs` - Milliseconds after which a check that has not answered is unhealthy, above 0 (default: `5000`)
@@ -728,6 +751,7 @@ Never rejects for a database that is down; a failed check is logged through `log
 **Throws:** `TypeError` (a rejection) when `db` is not a database, or `timeoutMs` is of the wrong type or out of range.
 
 **Example:**
+
 ```typescript
 const status = await checkDbHealth(pool, logger, { timeoutMs: 2000 });
 if (!status.healthy) console.error(`DB error: ${status.error}`);
@@ -762,6 +786,7 @@ class DbHealthMonitor {
 **Throws:** `TypeError` at construction when `db` is not a database, or an option is of the wrong type or out of range.
 
 **Example:**
+
 ```typescript
 const monitor = new DbHealthMonitor(pool, {
   intervalMs: 30000,
