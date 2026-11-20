@@ -167,24 +167,24 @@ importers:
   .:
     dependencies:
       '@marianmeres/clog':
-        specifier: ^3.23.0
-        version: 3.23.0
+        specifier: ^3.23.1
+        version: 3.23.1
       '@marianmeres/parse-boolean':
-        specifier: ^2.1.0
-        version: 2.1.0
+        specifier: ^2.2.0
+        version: 2.2.0
       '@marianmeres/pubsub':
-        specifier: ^3.0.0
-        version: 3.0.0
+        specifier: ^3.1.0
+        version: 3.1.0
       '@marianmeres/sqlkit':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.2.0
+        version: 0.2.0
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.6.3
         version: 2.6.4
       '@marianmeres/demino':
-        specifier: ^2.0.0
-        version: 2.0.0
+        specifier: ^2.1.1
+        version: 2.1.1
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.6
@@ -269,16 +269,17 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@marianmeres/clog@3.23.0':
-    resolution: {integrity: sha512-VNmXNTKT+JPfNUuF2rYQJzoAzQEXw1DQB6zfcjXdnb3rEDktL0O/Pgw8g9F84gLQRp7c+jMyG/25mfQxyMHUSQ==}
+  '@marianmeres/clog@3.23.1':
+    resolution: {integrity: sha512-Ck1nmcZFJX+f1LUHgbmQ4Wmof8w1yivFjfFFEtTP2NLMyADye8ijYXGwyNUvnkRVHmnKvnCqX6Yl6Dzieyx9UQ==}
+    engines: {node: '>=24.12'}
     peerDependencies:
       '@marianmeres/batch': ^1.3.0
     peerDependenciesMeta:
       '@marianmeres/batch':
         optional: true
 
-  '@marianmeres/demino@2.0.0':
-    resolution: {integrity: sha512-596nN9oCFdy64SbpPT3RYRvp3NoLMGkO6UlW5hGK9tBQit3mtS6n1DjMd92L1DtHLJJMZIsvLDlkl2T8kWzBFg==}
+  '@marianmeres/demino@2.1.1':
+    resolution: {integrity: sha512-8aZ6BCC+fxpHaNQ6nQ1CTbIzm7U2r5wmzAPcKrDK8hiZ5O9IZ5i+JKA9zG3OnVLPpzwKq7VO+Skzhi1WM2ECog==}
     engines: {node: '>=22'}
     peerDependencies:
       ws: ^8.18
@@ -298,11 +299,13 @@ packages:
   '@marianmeres/migrate@2.0.0':
     resolution: {integrity: sha512-ro5bQGW9MvW/Cb5sIIPtWwQyEQr3alutIQvDzlLPnV5fuEKSiyNKXYeVbIYp0g5iPzVr7PfJ2HmnYbeMJtc2Ow==}
 
-  '@marianmeres/parse-boolean@2.1.0':
-    resolution: {integrity: sha512-OxMUiYT2AlZk6JT+lGevLqw2aIheLYgapy4ysGvSSNEGBtIfwLx2Cco3rafCEvHgoEMyGl/B681a+u7ESnH4JA==}
+  '@marianmeres/parse-boolean@2.2.0':
+    resolution: {integrity: sha512-nYcfw63FBZxZAh5uP5E/VQxLBQeF6zUOQuTfvcuGcZZw31jtvfv/YzRGleE5B5/zmCADwd1sre7lR1jNzcEeJg==}
+    engines: {node: '>=24.12'}
+    hasBin: true
 
-  '@marianmeres/pubsub@3.0.0':
-    resolution: {integrity: sha512-yUEULA/c2f9GOiND+AiVm+6btBtdyBfigqhsTsSKumD5/Ni2wV0wZj/qn2llbACEKR4SqEyqKH6Cy4nKecW2ng==}
+  '@marianmeres/pubsub@3.1.0':
+    resolution: {integrity: sha512-OBfz013de1eZihK6WWxTGd2qal/5GcLsaAsZs59L/sjyCgoRiHafb4s4WFvkFM/WdRWcpdp6U/RurLn+DL5mcA==}
 
   '@marianmeres/searchable@2.10.0':
     resolution: {integrity: sha512-n8pTWvHTfY/+SrUFaUDKJIzojnC3UK8MdiNWGfV5TyN5OQ2yhnZ/LxHpZX5N9ksAsSv/KUuS9KyHUO+puP7ACA==}
@@ -310,12 +313,12 @@ packages:
   '@marianmeres/semver@1.0.1':
     resolution: {integrity: sha512-dzFgO+1AnFwW6OeEqSjSi/vZ571mgo0BnTGmtAAw7Nm/rJ0mrGV0Za5aPxezycZKUlVTdKgoZbn78e/zz/7J5A==}
 
-  '@marianmeres/simple-router@3.4.0':
-    resolution: {integrity: sha512-cD4lyykIMNBDAbmfcTBHoTRJjkY5Wdi2knecGCwMSU5sy8ARTGeapjg9gOG64dzwvvDlLggaZlOoQSgwgefDxg==}
+  '@marianmeres/simple-router@3.5.0':
+    resolution: {integrity: sha512-MAL/SSAo0FgJcOZh4A500JXAHRbq7jUMcnMCwhQq1ekkJikEN4ZG+rFUGqhmKswX65fhksC3KCG4v0DqFZAXUQ==}
 
-  '@marianmeres/sqlkit@0.1.1':
-    resolution: {integrity: sha512-g1RyFg+KleDmvBSrotdcPLTmwqSqWIYtWSLTe8+kVIc/oIngaJsj6aZWr8YgPWtTDJ/R9qNsTSjFAp+44i3n8g==}
-    engines: {node: '>=24.12'}
+  '@marianmeres/sqlkit@0.2.0':
+    resolution: {integrity: sha512-jlE0VU87E9p24vAX/on2KEXc5AAx/Yqu7gNeiKdW0R5KhJBk/HOkdQWnkg92kwcQ8Zasc4kPB8uFHOBJe2y6SA==}
+    engines: {node: ^24.20.0 || >=26.6.0}
 
   '@types/node@26.6.6':
     resolution: {integrity: sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==}
@@ -558,14 +561,14 @@ snapshots:
   '@biomejs/cli-win32-x64@2.6.4':
     optional: true
 
-  '@marianmeres/clog@3.23.0': {}
+  '@marianmeres/clog@3.23.1': {}
 
-  '@marianmeres/demino@2.0.0':
+  '@marianmeres/demino@2.1.1':
     dependencies:
-      '@marianmeres/clog': 3.23.0
+      '@marianmeres/clog': 3.23.1
       '@marianmeres/http-utils': 2.12.0
       '@marianmeres/midware': 1.5.0
-      '@marianmeres/simple-router': 3.4.0
+      '@marianmeres/simple-router': 3.5.0
       mrmime: 2.0.1
     transitivePeerDependencies:
       - '@marianmeres/batch'
@@ -574,7 +577,7 @@ snapshots:
 
   '@marianmeres/item-collection@1.4.2':
     dependencies:
-      '@marianmeres/pubsub': 3.0.0
+      '@marianmeres/pubsub': 3.1.0
       '@marianmeres/searchable': 2.10.0
 
   '@marianmeres/midware@1.5.0': {}
@@ -584,21 +587,21 @@ snapshots:
       '@marianmeres/item-collection': 1.4.2
       '@marianmeres/semver': 1.0.1
 
-  '@marianmeres/parse-boolean@2.1.0': {}
+  '@marianmeres/parse-boolean@2.2.0': {}
 
-  '@marianmeres/pubsub@3.0.0': {}
+  '@marianmeres/pubsub@3.1.0': {}
 
   '@marianmeres/searchable@2.10.0':
     dependencies:
-      '@marianmeres/pubsub': 3.0.0
+      '@marianmeres/pubsub': 3.1.0
 
   '@marianmeres/semver@1.0.1': {}
 
-  '@marianmeres/simple-router@3.4.0':
+  '@marianmeres/simple-router@3.5.0':
     dependencies:
-      '@marianmeres/pubsub': 3.0.0
+      '@marianmeres/pubsub': 3.1.0
 
-  '@marianmeres/sqlkit@0.1.1':
+  '@marianmeres/sqlkit@0.2.0':
     dependencies:
       '@marianmeres/migrate': 2.0.0
 

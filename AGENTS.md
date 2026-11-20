@@ -277,7 +277,9 @@ PENDING → RUNNING → COMPLETED
 1. **Runtime policy**: Node at the keyboard and in production, npm as the registry. No
    `Deno.*`, `Bun.*`, `jsr:` or `npm:` specifiers, no `@std/*`. Web standards first;
    `node:*` where they don't reach. The library's only `node:*` import is `node:process`
-   (SIGTERM handling in `jobs.ts`).
+   (SIGTERM handling in `jobs.ts`). `engines.node` is `@marianmeres/sqlkit`'s
+   (`^24.20.0 || >=26.6.0`): steve installs it, so steve's floor is never below it. Move
+   the two together, and the README's "Installation" line with them.
 2. **Erasable TypeScript**: no `enum`, `namespace`, constructor parameter properties;
    `import type` for types; explicit `.ts` import extensions (rewritten to `.js` on emit).
    Node strips types and never checks them: `pnpm run typecheck` is the only type gate

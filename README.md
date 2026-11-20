@@ -21,8 +21,11 @@ pass it a [node-postgres](https://node-postgres.com/) pool or client, or a sqlki
 npm i @marianmeres/steve   # or pnpm add
 ```
 
-The package targets Node >= 24.12 and is published to npm only. 3.1.2 is the last version
-on JSR, where it stays installable.
+The package targets Node 24.20 or later on the 24 line, or 26.6 or later; not 25. That is
+what `@marianmeres/sqlkit` 0.2 requires, which steve installs. Up to 4.0.1 steve asked for
+Node >= 24.12.
+
+It is published to npm only. 3.1.2 is the last version on JSR, where it stays installable.
 
 Steve does not depend on `pg`: install the version you build your pool or client with
 (`npm i pg`).

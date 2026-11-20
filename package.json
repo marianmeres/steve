@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "pnpm@12.16.1",
   "engines": {
-    "node": ">=24.12"
+    "node": "^24.20.0 || >=26.6.0"
   },
   "publishConfig": {
     "access": "public"
@@ -58,19 +58,19 @@
     "example": "node --env-file-if-exists=.env example/server.ts",
     "ci": "pnpm run typecheck && pnpm run lint && pnpm test",
     "prepublishOnly": "pnpm run ci && pnpm run build",
-    "release": "npx --yes @marianmeres/release@^2.2.0",
+    "release": "npx --yes @marianmeres/release@^2.3.0",
     "rp": "pnpm run release -y && pnpm publish",
     "rpm": "pnpm run release minor -y && pnpm publish"
   },
   "dependencies": {
-    "@marianmeres/clog": "^3.23.0",
-    "@marianmeres/parse-boolean": "^2.1.0",
-    "@marianmeres/pubsub": "^3.0.0",
-    "@marianmeres/sqlkit": "^0.1.1"
+    "@marianmeres/clog": "^3.23.1",
+    "@marianmeres/parse-boolean": "^2.2.0",
+    "@marianmeres/pubsub": "^3.1.0",
+    "@marianmeres/sqlkit": "^0.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",
-    "@marianmeres/demino": "^2.0.0",
+    "@marianmeres/demino": "^2.1.1",
     "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "pg": "^8.23.1",
